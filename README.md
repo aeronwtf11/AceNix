@@ -8,7 +8,7 @@ AceNix does **not** replace NixOS, Nix, or systemd. Instead, it aims to make eve
 
 ## Project status
 
-🚧 **Early development.** The initial focus is a Python prototype for reading, parsing, and validating AceNix configuration files. The commands and features below are **planned**, not available yet.
+ **Early development.** The initial focus is a Python prototype for reading, parsing, and validating AceNix configuration files. The commands and features below are **planned**, not available yet.
 
 ## Planned features
 
