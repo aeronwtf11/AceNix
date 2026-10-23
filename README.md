@@ -1,7 +1,7 @@
 # AceNix
 
 <p align="center">
-  <img src="assets/acenix-logo.png" width="200" alt="AceNix Logo">
+  <img src="assets/AceNix.png" width="200" alt="AceNix Logo">
 </p>
 
 **One System. Your Decisions.**
