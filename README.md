@@ -1,5 +1,9 @@
 # AceNix
 
+<p align="center">
+  <img src="assets/acenix-logo.png" width="200" alt="AceNix Logo">
+</p>
+
 **One System. Your Decisions.**
 
 AceNix is an open-source project aiming to bring a simple, rule-based configuration and management interface to **NixOS**. It is inspired by the ideas behind AceOS, a separate, future Linux distribution project.
