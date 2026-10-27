@@ -18,7 +18,10 @@
           pkgs = import nixpkgs { inherit system; };
           acenix = self.packages.${system}.default;
         in { package = acenix; } // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
-          nixos-traditional = import ./nix/tests/system.nix { inherit pkgs acenix; };
+          nixos-traditional = import ./nix/tests/system.nix {
+            inherit pkgs acenix;
+            nixpkgsArchive = nixpkgs-archive.outPath;
+          };
           nixos-flake = import ./nix/tests/system.nix {
             inherit pkgs acenix;
             nixpkgsArchive = nixpkgs-archive.outPath;

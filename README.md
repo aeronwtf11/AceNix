@@ -76,10 +76,12 @@ it does not imply that every boot-time setting changed immediately.
 
 AceNix never invokes sudo. Staging, inspection and candidate builds can run as
 an ordinary user. Source commits and activation need administrator permissions.
-When explicitly running with administrator privileges, pass the same absolute
-`--rules` and `--state` locations used for preview; changing users otherwise
-changes the XDG defaults. Keep state private (mode 0700) and owned by the user
-performing the operation. Do not share a writable administrator state directory.
+For administration, use the same administrator account and its private state
+throughout staging, preview and apply. An administrator cannot reuse state owned
+by an ordinary user. Explicit absolute `--rules` and `--state` paths avoid changes
+to the XDG defaults between shells. Keep state private (mode 0700) and owned by
+the account performing the operation. Do not share a writable administrator
+state directory.
 
 Global location options go **before** the command:
 

@@ -1,4 +1,4 @@
-{ pkgs, acenix, flakeMode ? false, efi ? false, nixpkgsArchive ? null }:
+{ pkgs, acenix, nixpkgsArchive, flakeMode ? false, efi ? false }:
 let
   inherit (pkgs) lib;
   source = acenix.src;
@@ -113,12 +113,8 @@ let
       };
     }
   '';
-  localChannel = pkgs.runCommand "acenix-channel.tar.gz" {
-    nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
-  } ''
-    mkdir payload
-    ln -s ${nixpkgsPath} payload/nixpkgs
-    tar -czf $out -C payload nixpkgs
+  localChannel = pkgs.runCommand "acenix-channel.tar.gz" { } ''
+    cp ${nixpkgsArchive} $out
   '';
 in
 pkgs.testers.runNixOSTest {
