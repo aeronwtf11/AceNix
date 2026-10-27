@@ -11,6 +11,15 @@ editor: token offsets, balanced delimiters and binding paths determine edits.
 It is not a complete Nix parser or an attempt to execute Nix in Python. Unknown
 syntax is refused, and Nix parses/evaluates every candidate afterward.
 
+Native planning batches option metadata, current values, temporary type checks,
+and package metadata into one evaluation of the selected sources. Candidate
+verification uses a separate fresh module graph and groups effective values,
+package inclusion/removal checks, warnings, and the system derivation. Native
+syntax parsing still runs for each changed file. Doctor combines its derivation
+and package checks, falling back to separate queries on failure so diagnostics
+retain their individual meaning. No persistent evaluation cache bypasses source
+or candidate checks. See [performance measurements](PERFORMANCE.md).
+
 ```mermaid
 flowchart LR
   CLI --> Rules

@@ -21,6 +21,9 @@ class Catalogue:
     def get(self, path):
         return path in self.active
 
+    def get_many(self, paths):
+        return {path: self.get(path) for path in paths}
+
     def info(self, path):
         return {"name": path}
 

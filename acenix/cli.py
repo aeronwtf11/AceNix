@@ -13,6 +13,7 @@ from .engine import Engine, mapped, service_option
 from .errors import (
     AceNixError,
     Cancelled,
+    ConflictError,
     ValidationError,
     ToolError,
     ActivationCompletedError,
@@ -22,7 +23,7 @@ from .generations import generations, rollback
 from .nixos import NixOS, discover
 from .presentation import Terminal, failure, human
 from .profiles import Profiles
-from .storage import Store, atomic_write, digest
+from .storage import Store, atomic_write, digest, safe_path
 from .transactions import Transactions
 
 COMMANDS = "help status get set setr install remove update enable disable packages services service options profile preview apply generations rollback history doctor backups recover completion setr:fastfetch".split()
@@ -30,6 +31,54 @@ COMMANDS = "help status get set setr install remove update enable disable packag
 
 def xdg(name, fallback):
     return Path(os.environ.get(name, Path.home() / fallback))
+
+
+def default_rules_path():
+    directory = xdg("XDG_CONFIG_HOME", ".config") / "acenix"
+    current, legacy = directory / "config.ace", directory / "config.sys"
+    # Reading status or running doctor must not rename a user's files. Prefer
+    # the new name, but keep existing installations readable until they stage.
+    try:
+        use_current = current.exists() or current.is_symlink() or not legacy.exists()
+    except OSError:
+        # Default-path access must not prevent --help or an explicit --rules
+        # override. A real document read will report the permission failure.
+        return current
+    return current if use_current else legacy
+
+
+class RulesPathAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, values)
+        namespace.rules_explicit = True
+
+
+def write_rule_document(args, data, before):
+    """Write rules, migrating only an implicitly selected legacy document.
+
+    The original config.sys remains an untouched migration backup. Explicit
+    --rules paths retain their exact names, including config.sys.
+    """
+    source = safe_path(args.rules.absolute())
+    previous = source.read_bytes() if source.exists() else None
+    if digest(previous or b"") != digest(before):
+        raise ConflictError(f"Concurrent modification: {source}")
+    destination = source
+    migrating = (
+        not getattr(args, "rules_explicit", True) and source.name == "config.sys"
+    )
+    if migrating:
+        destination = source.with_name("config.ace")
+        if destination.exists() or destination.is_symlink():
+            raise ConflictError(
+                f"The new rule document appeared while staging: {destination}. Run the command again to use it."
+            )
+    atomic_write(
+        destination, data, expected=digest(b"" if migrating else previous or b"")
+    )
+    if migrating:
+        args.rules = destination
+    return None if migrating else previous
 
 
 def output_flags(parser):
@@ -78,8 +127,11 @@ def parser():
     root.add_argument(
         "--rules",
         type=Path,
-        default=xdg("XDG_CONFIG_HOME", ".config") / "acenix/config.sys",
+        action=RulesPathAction,
+        default=default_rules_path(),
+        help="Rule document (default: ~/.config/acenix/config.ace; accepts legacy config.sys)",
     )
+    root.set_defaults(rules_explicit=False)
     root.add_argument(
         "--state", type=Path, default=xdg("XDG_STATE_HOME", ".local/state") / "acenix"
     )
@@ -213,7 +265,7 @@ def stage(args, store, updates):
     text = before.decode() or "# AceNix configuration\n"
     for key, value, section in updates:
         text = rules.update(text, key, value, section)
-    atomic_write(args.rules.absolute(), text.encode(), expected=digest(before))
+    write_rule_document(args, text.encode(), before)
     store.write("preview.json", {})
     store.history(
         {
@@ -243,11 +295,17 @@ def completion(shell):
 
 
 def dispatch(args):
+    def progress(message):
+        if not args.quiet and not args.json:
+            terminal = Terminal(stream=sys.stderr, ascii=args.ascii)
+            terminal.text("... " + message)
+            print(terminal.result(), file=sys.stderr, flush=True)
+
     store, command = Store(args.state.absolute()), args.command
     if command == "completion":
         return completion(args.shell)
     if command == "doctor":
-        return diagnose(args, store)
+        return diagnose(args, store, progress=progress)
     if command == "help":
         parser().parse_args(args.topic + ["--help"])
     if command == "history":
@@ -278,12 +336,6 @@ def dispatch(args):
             if args.action == "export":
                 return profiles.export(args.name, args.file)
     backend = NixOS(discover(args.config, args.flake, args.host, args.module))
-
-    def progress(message):
-        if not args.quiet and not args.json:
-            terminal = Terminal(stream=sys.stderr, ascii=args.ascii)
-            terminal.text("... " + message)
-            print(terminal.result(), file=sys.stderr, flush=True)
 
     target, transactions = (
         backend.target,
@@ -401,12 +453,11 @@ def dispatch(args):
                 values, packages, _ = mapped(backend, parsed)
                 if values:
                     backend.validate(values)
-                for attr in packages:
-                    backend.package(attr)
+                if packages:
+                    backend.packages_many(packages)
                 updates = [(parsed[0].key, parsed[0].value, parsed[0].section)]
             elif command in {"install", "remove"}:
-                for attr in args.names:
-                    backend.package(attr)
+                backend.packages_many(args.names)
                 updates = [
                     ("pkg." + attr, command == "install", "packages")
                     for attr in args.names
@@ -418,15 +469,14 @@ def dispatch(args):
             return stage(args, store, updates)
         if command == "profile" and args.action == "activate":
             text = profiles.show(args.name)
-            previous = args.rules.read_bytes() if args.rules.exists() else None
-            atomic_write(
-                args.rules.absolute(), text.encode(), expected=digest(previous or b"")
-            )
+            before = args.rules.read_bytes() if args.rules.exists() else b""
+            previous = write_rule_document(args, text.encode(), before)
             store.write("preview.json", {})
             if args.stage:
                 return {
                     "result": "profile-staged",
                     "profile": args.name,
+                    "rules": str(args.rules),
                     "activation_performed": False,
                 }
             try:
@@ -457,8 +507,7 @@ def dispatch(args):
             return {**result, "profile": args.name}
         if command in {"preview", "apply"}:
             data = args.rules.read_bytes() if args.rules.exists() else b""
-            if command == "apply":
-                progress("Validating configuration")
+            progress("Validating configuration")
             plan = Engine(backend).plan(
                 rules.parse(data.decode(), str(args.rules)), store.read(), digest(data)
             )

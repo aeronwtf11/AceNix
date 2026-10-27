@@ -291,6 +291,10 @@ def test_read_only_permissions_are_a_doctor_warning(tmp_path, monkeypatch):
     target = SimpleNamespace(root=config.parent, config=config, identity=str(config))
     backend = SimpleNamespace(
         target=target,
+        diagnostic_data=lambda: {
+            "derivation": "/nix/store/system.drv",
+            "package": {"name": "hello"},
+        },
         check=lambda: "/nix/store/system.drv",
         package=lambda name: {"name": name},
         run=lambda args: "{}",

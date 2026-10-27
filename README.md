@@ -122,7 +122,7 @@ state directory.
 Global location options go **before** the command:
 
 ```sh
-acenix --config /etc/nixos/configuration.nix --rules /path/config.sys preview
+acenix --config /etc/nixos/configuration.nix --rules /path/config.ace preview
 acenix --flake /etc/nixos --host my-pc --module /etc/nixos/configuration.nix preview
 ```
 
@@ -135,6 +135,25 @@ Keep editable imports within the configuration directory (the config's parent,
 or the flake directory). Symlinked configuration trees are refused.
 
 ## Rules and native options
+
+AceNix stores your rules in `~/.config/acenix/config.ace` (or under
+`$XDG_CONFIG_HOME` when set). Existing default `config.sys` files are still read.
+The next staging command writes `config.ace` and retains the original
+`config.sys` unchanged as a backup. If both exist, `config.ace` is used. Inspection
+commands, including `preview` and `doctor`, do not migrate files, and an explicit
+`--rules /path/config.sys` continues using that exact path.
+
+Your user and root have separate defaults. To apply rules staged by your user,
+select that same document explicitly while keeping administrator state private:
+
+```sh
+sudo -H acenix --rules /home/aaron/.config/acenix/config.ace preview
+sudo -H acenix --rules /home/aaron/.config/acenix/config.ace apply
+```
+
+Replace `/home/aaron` with your home directory. If the existing file has not yet
+been migrated, use its actual `config.sys` path instead. These commands do not
+copy user-owned history or package-ownership state into administrator state.
 
 The original beginner-friendly format remains valid:
 
@@ -340,8 +359,13 @@ run real boot tests (software emulation also works without KVM).
 Tests never activate the developer's host. See
 [architecture](docs/ARCHITECTURE.md) and [release verification](docs/RELEASING.md).
 
+`preview`, `doctor`, and `apply` batch related Nix queries while evaluating fresh
+sources and checking each candidate. See [performance](docs/PERFORMANCE.md) for
+measured timings, the build-time limits of those measurements, and native
+regression checks.
+
 The root `main.py` remains a compatibility entry point; no arguments
-preview the adjacent config.sys. `core/main.py` is the understandable CLI entry
+preview the adjacent config.ace. `core/main.py` is the understandable CLI entry
 point, retaining `# EXTRAS`. The parsing logic lives in `acenix/rules.py`.
 Exactly three optional learning exercises are marked `TODO(USER)` in
 `acenix/presentation.py`; all have working default behavior.

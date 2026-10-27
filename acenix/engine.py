@@ -77,8 +77,11 @@ def mapped(backend, rules):
             name: next((p for p in options if p in available), None)
             for name, options in DESKTOPS.items()
         }
+        desktop_values = backend.get_many([path for path in paths.values() if path])
         active = [
-            name for name, path in paths.items() if path and backend.get(path) is True
+            name
+            for name, path in paths.items()
+            if path and desktop_values[path] is True
         ]
         requested = desktop.value
         if requested is True:
@@ -131,10 +134,11 @@ def mapped(backend, rules):
                     and p.endswith(".enable")
                     and p not in options
                 ]
+                manager_values = backend.get_many(competing)
                 enabled = [
                     p
                     for p in competing
-                    if backend.get(p) is True and values.get(p) is not False
+                    if manager_values[p] is True and values.get(p) is not False
                 ]
                 if enabled:
                     raise ConflictError(
@@ -301,8 +305,17 @@ class Engine:
             )
         plan.managed_packages = dict(state.get("managed_packages", {}))
         values, packages, origins = mapped(backend, rules)
-        if values:
-            backend.validate(values)
+        native = (
+            backend.planning_data(values, packages)
+            if values or packages
+            else {
+                "info": {},
+                "current": {},
+                "packages": {},
+                "installed": [],
+                "flake_source": None,
+            }
+        )
         buffers = {}
 
         def edit(file, operation):
@@ -316,7 +329,10 @@ class Engine:
             buffers[file] = operation(Editor(before)).encode()
 
         def choose(path):
-            files = backend.source_file(path)
+            info = native["info"][path]
+            files = backend.source_file(
+                path, info=info, flake_source=native["flake_source"]
+            )
             if len(files) > 1:
                 exact = []
                 for file in files:
@@ -338,7 +354,6 @@ class Engine:
                 )
             if files:
                 return files[0]
-            info = backend.info(path)
             if (
                 info["priority"] is not None
                 and info["priority"] <= 100
@@ -355,7 +370,7 @@ class Engine:
             return file
 
         for path, requested in values.items():
-            current = backend.get_optional(path)
+            current = native["current"][path]
             serial = requested.value if isinstance(requested, NixPath) else requested
             plan.values.append(
                 {
@@ -387,11 +402,11 @@ class Engine:
                 )
             ):
                 plan.high_impact.append(path)
-        installed = backend.get("environment.systemPackages") if packages else []
+        installed = native["installed"]
         installed_paths = {p.get("storePath") for p in installed if isinstance(p, dict)}
         additions, removals, package_names = [], {}, {}
         for attr, wanted in packages.items():
-            package = backend.package(attr)
+            package = native["packages"][attr]
             previous = package_names.setdefault(package["storePath"], attr)
             if previous != attr:
                 raise ConflictError(
@@ -417,7 +432,11 @@ class Engine:
                     f"{attr} is declared outside AceNix ownership; remove it in its native module."
                 )
         if additions:
-            files = backend.source_file("environment.systemPackages")
+            files = backend.source_file(
+                "environment.systemPackages",
+                info=native["info"]["environment.systemPackages"],
+                flake_source=native["flake_source"],
+            )
             file = target.module or (files[0] if len(files) == 1 else target.config)
             if file is None:
                 raise ConflictError(

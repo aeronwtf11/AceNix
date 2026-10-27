@@ -66,28 +66,29 @@ class Transactions:
             self.backend.run(
                 ["nix-instantiate", "--parse", str(target.root / relative)]
             )
+        verified = candidate.verification_data(
+            [row["option"] for row in plan.values],
+            [*plan.packages["add"], *plan.packages["remove"]],
+            include_packages=any(plan.packages.values()),
+        )
         for row in plan.values:
-            actual = candidate.get(row["option"])
+            actual = verified["values"][row["option"]]
             if actual != row["requested"]:
                 raise ConflictError(
                     f"{row['option']}: native merge priorities/imports prevent the requested effective value; no files were changed."
                 )
-        plan.derivation = candidate.check()
+        plan.derivation = verified["derivation"]
         plan.evaluated = True
-        plan.warnings.extend(candidate.eval("n.config.warnings"))
-        current = (
-            candidate.get("environment.systemPackages")
-            if any(plan.packages.values())
-            else []
-        )
+        plan.warnings.extend(verified["warnings"])
+        current = verified["installed"]
         installed = {p.get("storePath") for p in current if isinstance(p, dict)}
         for attr in plan.packages["add"]:
-            if candidate.package(attr)["storePath"] not in installed:
+            if verified["packages"][attr]["storePath"] not in installed:
                 raise ConflictError(
                     f"{attr} was not included by the candidate module imports."
                 )
         for attr in plan.packages["remove"]:
-            if candidate.package(attr)["storePath"] in installed:
+            if verified["packages"][attr]["storePath"] in installed:
                 plan.warnings.append(
                     f"{attr} remains installed through another native definition; only the owned expression is removed."
                 )
@@ -95,6 +96,7 @@ class Transactions:
 
     def preview(self, plan):
         with self.candidate(plan) as target:
+            self.progress("Evaluating NixOS")
             self.validate(plan, target)
         self.store.write(
             "preview.json",

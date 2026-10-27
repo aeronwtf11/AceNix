@@ -10,7 +10,7 @@ from acenix.cli import main
 # VERSION
 name = "AceNix"
 
-# MAIN — read the selected config.sys and actual NixOS configuration.
+# MAIN — read the selected config.ace and actual NixOS configuration.
 # VALUES and READING AND VALIDATING now live in acenix/rules.py.
 # NIXOS INTEGRATION uses native evaluation in acenix/nixos.py.
 

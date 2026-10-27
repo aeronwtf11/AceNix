@@ -10,8 +10,9 @@ from .transactions import Transactions
 from .engine import Engine
 
 
-def diagnose(args, store):
+def diagnose(args, store, progress=None):
     checks = []
+    progress = progress or (lambda message: None)
 
     def record(name, operation):
         try:
@@ -52,8 +53,28 @@ def diagnose(args, store):
         return {"healthy": False, "checks": checks}
     backend = NixOS(target)
     checks.append({"check": "native target", "status": "ok", "detail": target.identity})
-    record("NixOS evaluation and assertions", backend.check)
-    record("package management", lambda: backend.package("hello"))
+    progress("Checking NixOS evaluation and packages")
+    try:
+        native = backend.diagnostic_data()
+    except (AceNixError, OSError, ValueError):
+        # Recover each check's own full diagnostics when the combined query fails.
+        record("NixOS evaluation and assertions", backend.check)
+        record("package management", lambda: backend.package("hello"))
+    else:
+        checks.extend(
+            [
+                {
+                    "check": "NixOS evaluation and assertions",
+                    "status": "ok",
+                    "detail": native["derivation"],
+                },
+                {
+                    "check": "package management",
+                    "status": "ok",
+                    "detail": native["package"],
+                },
+            ]
+        )
 
     def permissions():
         details = {
@@ -92,6 +113,7 @@ def diagnose(args, store):
             "conflicts": [],
         }
 
+    progress("Checking saved rules and native sources")
     record("pending rule types and source conflicts", pending)
     record(
         "native store connection",

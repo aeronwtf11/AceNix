@@ -8,7 +8,7 @@ from core.main import main
 if __name__ == "__main__":
     arguments = sys.argv[1:] or [
         "--rules",
-        str(Path(__file__).with_name("config.sys")),
+        str(Path(__file__).with_name("config.ace")),
         "preview",
     ]
     raise SystemExit(main(arguments))

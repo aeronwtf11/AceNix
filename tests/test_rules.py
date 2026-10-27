@@ -6,7 +6,7 @@ from acenix.rules import NixPath, encode_value, parse, parse_value, to_nix, upda
 def test_original_config():
     from pathlib import Path
 
-    result = parse(Path("config.sys").read_text(), "config.sys")
+    result = parse(Path("config.ace").read_text(), "config.ace")
     assert [(r.key, r.value) for r in result] == [
         ("hostname", "ace-pc"),
         ("network", True),

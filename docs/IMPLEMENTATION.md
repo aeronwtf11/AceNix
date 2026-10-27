@@ -4,7 +4,8 @@ AceNix 1.0.0 implements the components below. Initial-release acceptance evidenc
 is recorded here; see [RELEASING.md](RELEASING.md) for reproduction and the
 [debug-log and terminal UX follow-up](DEBUG-2026-10-27.md) for subsequent fixes.
 
-- [x] Preserve the original parser flow, comments, config.sys and entry points.
+- [x] Preserve the original parser flow, comments, sample rules and entry points
+  (the sample is now named `config.ace`; installed legacy `config.sys` files remain supported).
 - [x] Typed portable rules, source locations, validation, persistence and installed CLI.
 - [x] Actual native option discovery, evaluated values and conservative source edits.
 - [x] Declarative packages, service aliases/status, hardware/network/desktop settings.

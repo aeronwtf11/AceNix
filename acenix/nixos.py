@@ -138,6 +138,17 @@ class NixOS:
             }}
             else if builtins.isList x then map render x
             else x;
+          encodeAttrs = attrs: {{ __acenixAttrs = lib.mapAttrsToList
+            (name: value: {{ inherit name value; }}) attrs; }};
+          optionInfo = ({self._info_function()});
+          packageInfo = path: name:
+            let p = lib.attrByPath path (throw "Package does not exist in the selected nixpkgs") n.pkgs;
+            in if !lib.isDerivation p then throw "Attribute is not an installable package" else {{
+              attribute = name; name = p.name; storePath = p.outPath;
+              description = p.meta.description or "";
+              broken = p.meta.broken or false;
+              available = lib.meta.availableOn n.pkgs.stdenv.hostPlatform p;
+            }};
         in {body}"""
         result = self.run(
             [
@@ -178,6 +189,19 @@ class NixOS:
         parts = to_nix(list(attr_parts(path)))
         return self.eval(
             f"if lib.hasAttrByPath {parts} n.config then render (lib.getAttrFromPath {parts} n.config) else {{ __acenixAbsent = true; }}"
+        )
+
+    def get_many(self, paths):
+        if not paths:
+            return {}
+        return self.eval(
+            "encodeAttrs "
+            + self._attributes(
+                {
+                    path: f'render (lib.attrByPath {to_nix(list(attr_parts(path)))} (throw "No such evaluated value") n.config)'
+                    for path in paths
+                }
+            )
         )
 
     def overview(self):
@@ -231,27 +255,27 @@ class NixOS:
               else if value.success then value.value else null;
           }}) {to_nix(paths)})""")
 
-    def info(self, path):
-        path = validate_attr(path)
+    @staticmethod
+    def _info_function():
         # Static options plus submodule child schemas: attrsOf uses <name> or
         # <name?> placeholders, which are metadata only, never emitted to source.
-        body = f"""let
+        body = """path: name: let
           resolve = tree: parts: sources: editable: readOnly:
-            if parts == [] then {{ option = tree; inherit sources editable readOnly; }} else
+            if parts == [] then { option = tree; inherit sources editable readOnly; } else
             if lib.isOption tree then resolve (tree.type.getSubOptions [])
               (if builtins.elem tree.type.name ["attrsOf" "lazyAttrsOf"] then builtins.tail parts else parts)
               (sources ++ (map (d: toString d.file) (tree.definitionsWithLocations or [])))
               (editable ++ (if (tree.highestPrio or 1500) == 1500 then [] else map (d: toString d.file) (tree.definitionsWithLocations or [])))
               (readOnly || (tree.readOnly or false)) else
             if builtins.hasAttr (builtins.head parts) tree then
-              resolve tree.${{builtins.head parts}} (builtins.tail parts) sources editable readOnly
+              resolve tree.${builtins.head parts} (builtins.tail parts) sources editable readOnly
             else if builtins.hasAttr "<name>" tree then resolve tree."<name>" parts sources editable readOnly
             else if builtins.hasAttr "<name?>" tree then resolve tree."<name?>" parts sources editable readOnly
             else throw "Unknown option or unsupported dynamic submodule path";
-          resolved = resolve n.options {to_nix(list(attr_parts(path)))} [] [] false;
+          resolved = resolve n.options path [] [] false;
           o = resolved.option;
-        in if !lib.isOption o then throw "Path names an option namespace, not an option" else {{
-          name = {nix_string(path)};
+        in if !lib.isOption o then throw "Path names an option namespace, not an option" else {
+          inherit name;
           type = o.type.name; typeDescription = o.type.description;
           readOnly = resolved.readOnly || (o.readOnly or false);
           description = if builtins.isString (o.description or "") then o.description or "" else "See NixOS manual";
@@ -261,34 +285,127 @@ class NixOS:
           priority = o.highestPrio or null;
           default = if o ? default then
             let value = builtins.tryEval (builtins.deepSeq (render o.default) (render o.default));
-            in if value.success then value.value else {{ unavailable = true; }}
-            else {{ unavailable = true; }};
-        }}"""
-        return self.eval(body)
+            in if value.success then value.value else { unavailable = true; }
+            else { unavailable = true; };
+        }"""
+        return body
 
-    def validate(self, values):
-        """Check proposed values with the actual module system and its types."""
-        for path in values:
-            info = self.info(path)
-            if info["readOnly"]:
-                raise ValidationError(
-                    f"{path} is a read-only NixOS option ({info['declarations']})."
-                )
-        # mkForce is used only in this temporary type-check overlay. Native
-        # source edits never introduce priorities; candidate evaluation below
-        # checks actual merge semantics and the final effective value.
+    @staticmethod
+    def _info_expression(path):
+        path = validate_attr(path)
+        return f"optionInfo {to_nix(list(attr_parts(path)))} {nix_string(path)}"
+
+    def info(self, path):
+        return self.eval(self._info_expression(path))
+
+    @staticmethod
+    def _attributes(expressions):
+        return (
+            "{ "
+            + " ".join(
+                f"{nix_string(name)} = ({expression});"
+                for name, expression in expressions.items()
+            )
+            + " }"
+        )
+
+    @staticmethod
+    def _type_overlay(values):
+        # These priorities exist only in the temporary type-check overlay.
         definitions = " ".join(
             f"{attr_name(attr_parts(path), nix=True)} = lib.mkForce ({to_nix(value)});"
             for path, value in values.items()
         )
         paths = to_nix([list(attr_parts(path)) for path in values])
-        return self.eval(f"""let candidate = n.extendModules {{ modules = [ ({{ lib, ... }}: {{ {definitions} }}) ]; }};
-          in map (path: render (lib.attrByPath path (throw "Option missing") candidate.config)) {paths}""")
+        return f"""let candidate = n.extendModules {{ modules = [ ({{ lib, ... }}: {{ {definitions} }}) ]; }};
+          in map (path: render (lib.attrByPath path (throw "Option missing") candidate.config)) {paths}"""
+
+    @staticmethod
+    def _writable(metadata):
+        for path, info in metadata.items():
+            if info["readOnly"]:
+                raise ValidationError(
+                    f"{path} is a read-only NixOS option ({info['declarations']})."
+                )
+
+    def validate(self, values):
+        """Check proposed values with the actual module system and its types."""
+        metadata = self._attributes(
+            {path: self._info_expression(path) for path in values}
+        )
+        result = self.eval(f"""let metadata = {metadata}; in {{
+          info = encodeAttrs metadata;
+          validated = if builtins.any (o: o.readOnly) (builtins.attrValues metadata)
+            then [] else ({self._type_overlay(values)});
+        }}""")
+        self._writable(result["info"])
+        return result["validated"]
+
+    def planning_data(self, values, packages):
+        """Inspect one fresh native graph for the complete plan, without caching."""
+        metadata = self._attributes(
+            {
+                path: self._info_expression(path)
+                for path in dict.fromkeys(
+                    [*values, *(["environment.systemPackages"] if packages else [])]
+                )
+            }
+        )
+        current = self._attributes(
+            {
+                path: f"if lib.hasAttrByPath {to_nix(list(attr_parts(path)))} n.config then render (lib.getAttrFromPath {to_nix(list(attr_parts(path)))} n.config) else {{ __acenixAbsent = true; }}"
+                for path in values
+            }
+        )
+        catalogue = self._attributes(
+            {name: self._package_expression(name) for name in packages}
+        )
+        flake_source = (
+            f"(builtins.getFlake {nix_string(flake_ref(self.target.flake))}).outPath"
+            if self.target.flake
+            else "null"
+        )
+        result = self.eval(f"""let metadata = {metadata}; in {{
+          info = encodeAttrs metadata;
+          current = encodeAttrs {current};
+          validated = if builtins.any (o: o.readOnly) (builtins.attrValues metadata)
+            then [] else ({self._type_overlay(values)});
+          packages = encodeAttrs {catalogue};
+          installed = {"render n.config.environment.systemPackages" if packages else "[]"};
+          flake_source = {flake_source};
+        }}""")
+        self._writable(result["info"])
+        return result
+
+    def verification_data(self, paths, packages, include_packages):
+        """Reevaluate the candidate's effective values, assertions and packages."""
+        values = self._attributes(
+            {
+                path: f'render (lib.attrByPath {to_nix(list(attr_parts(path)))} (throw "No such evaluated value") n.config)'
+                for path in paths
+            }
+        )
+        catalogue = self._attributes(
+            {name: self._package_expression(name) for name in packages}
+        )
+        return self.eval(f"""{{
+          values = encodeAttrs {values};
+          packages = encodeAttrs {catalogue};
+          installed = {"render n.config.environment.systemPackages" if include_packages else "[]"};
+          derivation = n.config.system.build.toplevel.drvPath;
+          warnings = n.config.warnings;
+        }}""")
 
     def check(self, target=None):
         # Evaluating the real system derivation forces assertions and module type
         # checking. This does not pretend that a successful build occurred.
         return self.eval("n.config.system.build.toplevel.drvPath", target=target)
+
+    def diagnostic_data(self):
+        return self.eval(f"""{{
+          derivation = n.config.system.build.toplevel.drvPath;
+          package = ({self._package_expression("hello")});
+        }}""")
 
     def build(self, target):
         if target.flake:
@@ -350,8 +467,8 @@ class NixOS:
             )
         return self.run([str(binary), mode], timeout=1800)
 
-    def source_file(self, path):
-        info = self.info(path)
+    def source_file(self, path, *, info=None, flake_source=None):
+        info = self.info(path) if info is None else info
         root = self.target.root
         files = []
         for name in info["editableFiles"]:
@@ -359,8 +476,12 @@ class NixOS:
             if self.target.flake and not file.resolve().is_relative_to(root):
                 # getFlake imports a store copy. Map only this exact flake's
                 # outPath; do not guess a module from its basename.
-                out = self.eval(
-                    f"(builtins.getFlake {nix_string(flake_ref(self.target.flake))}).outPath"
+                out = (
+                    flake_source
+                    if flake_source is not None
+                    else self.eval(
+                        f"(builtins.getFlake {nix_string(flake_ref(self.target.flake))}).outPath"
+                    )
                 )
                 # Local/chroot stores report real on-disk locations in option
                 # metadata, while outPath remains a logical /nix/store path.
@@ -384,15 +505,19 @@ class NixOS:
                 files.append(file.absolute())
         return sorted(set(files))
 
-    def package(self, attr):
+    @staticmethod
+    def _package_expression(attr):
         attr = validate_attr(attr)
-        return self.eval(f"""let p = lib.attrByPath {to_nix(list(attr_parts(attr)))} (throw "Package does not exist in the selected nixpkgs") n.pkgs;
-          in if !lib.isDerivation p then throw "Attribute is not an installable package" else {{
-            attribute = {nix_string(attr)}; name = p.name; storePath = p.outPath;
-            description = p.meta.description or "";
-            broken = p.meta.broken or false;
-            available = lib.meta.availableOn n.pkgs.stdenv.hostPlatform p;
-          }}""")
+        return f"packageInfo {to_nix(list(attr_parts(attr)))} {nix_string(attr)}"
+
+    def packages_many(self, names):
+        return self.eval(
+            "encodeAttrs "
+            + self._attributes({name: self._package_expression(name) for name in names})
+        )
+
+    def package(self, attr):
+        return self.eval(self._package_expression(attr))
 
     def package_search(self, query, limit=30):
         if not query or len(query) > 256 or not 1 <= limit <= 10000:
