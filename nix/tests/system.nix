@@ -1,13 +1,11 @@
-{ pkgs, acenix, nixpkgsArchive, flakeMode ? false, efi ? false }:
+{ pkgs, acenix, nixpkgsArchive, nixosSystem, flakeMode ? false, efi ? false }:
 let
   inherit (pkgs) lib;
   source = acenix.src;
   nixpkgsPath = builtins.path { path = pkgs.path; name = "source"; };
-  # Use the exact metadata of the immutable tarball input used inside the guest,
-  # including Nixpkgs' public nixosSystem wrapper and its version information.
-  pinnedHash = (builtins.fromJSON (builtins.readFile ../../flake.lock)).nodes.nixpkgs.locked.narHash;
-  flakePkgs = builtins.getFlake (builtins.unsafeDiscardStringContext
-    "tarball+file://${nixpkgsArchive}?narHash=${pinnedHash}");
+  # Reuse the already resolved input's public wrapper. With Nix 2.35's lazy
+  # inputs, nixpkgsArchive.outPath is not materialized during --no-build;
+  # opening it through a second getFlake fails on a fresh CI store.
   bootSettings = if efi then ''
     boot.loader.grub.enable = false;
     boot.loader.systemd-boot.enable = true;
@@ -109,7 +107,7 @@ let
             ++ lib.optional hello pkgs.hello;
         }) ];
       };
-    in (if flakeMode then flakePkgs.lib.nixosSystem arguments
+    in (if flakeMode then nixosSystem arguments
         else import (nixpkgsPath + "/nixos/lib/eval-config.nix") arguments).config.system.build.toplevel;
   generations = [
     (generation "acenix-before" false false)

@@ -20,10 +20,12 @@
         in { package = acenix; } // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
           nixos-traditional = import ./nix/tests/system.nix {
             inherit pkgs acenix;
+            nixosSystem = nixpkgs.lib.nixosSystem;
             nixpkgsArchive = nixpkgs-archive.outPath;
           };
           nixos-flake = import ./nix/tests/system.nix {
             inherit pkgs acenix;
+            nixosSystem = nixpkgs.lib.nixosSystem;
             nixpkgsArchive = nixpkgs-archive.outPath;
             flakeMode = true; efi = true;
           };
