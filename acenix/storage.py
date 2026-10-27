@@ -1,4 +1,5 @@
 """Private, durable state, advisory locking and atomic file replacement."""
+
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import fcntl
@@ -10,11 +11,14 @@ import stat
 import tempfile
 from .errors import ConflictError, ValidationError
 
+
 def now():
     return datetime.now(timezone.utc).isoformat()
 
+
 def digest(data: bytes):
     return hashlib.sha256(data).hexdigest()
+
 
 def safe_path(path: Path):
     path = path.absolute()
@@ -23,6 +27,7 @@ def safe_path(path: Path):
     if path.exists() and not path.is_file():
         raise ConflictError(f"Expected a regular file: {path}")
     return path
+
 
 def atomic_write(path: Path, data: bytes, *, mode=0o600, expected=None):
     path = safe_path(path)
@@ -36,7 +41,9 @@ def atomic_write(path: Path, data: bytes, *, mode=0o600, expected=None):
         with os.fdopen(fd, "wb") as stream:
             stream.write(data)
             stream.flush()
-            os.fchmod(stream.fileno(), stat.S_IMODE(original.st_mode) if original else mode)
+            os.fchmod(
+                stream.fileno(), stat.S_IMODE(original.st_mode) if original else mode
+            )
             if original and os.geteuid() == 0:
                 os.fchown(stream.fileno(), original.st_uid, original.st_gid)
             os.fsync(stream.fileno())
@@ -52,6 +59,7 @@ def atomic_write(path: Path, data: bytes, *, mode=0o600, expected=None):
         if os.path.exists(name):
             os.unlink(name)
 
+
 class Store:
     def __init__(self, root: Path):
         self.root = root.absolute()
@@ -62,7 +70,9 @@ class Store:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         info = self.root.stat()
         if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077:
-            raise ConflictError(f"State directory must be owned by you and mode 0700: {self.root}")
+            raise ConflictError(
+                f"State directory must be owned by you and mode 0700: {self.root}"
+            )
 
     @contextmanager
     def lock(self):
@@ -85,10 +95,12 @@ class Store:
 
     def write(self, name, value):
         self.prepare()
-        atomic_write(self.root / name, json.dumps(value, indent=2, ensure_ascii=False).encode() + b"\n")
+        atomic_write(
+            self.root / name,
+            json.dumps(value, indent=2, ensure_ascii=False).encode() + b"\n",
+        )
 
     def history(self, event):
         events = self.read("history.json", [])
         events.append({"time": now(), **event})
         self.write("history.json", events)
-
