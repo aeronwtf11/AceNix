@@ -69,6 +69,7 @@ def parse_value(text: str, *, string=False):
         if explicit_json or raw.startswith(('"', '[', '{')):
             raise ValidationError(f"Invalid JSON value: {error}") from error
         return raw
+    to_nix(value)
     return value
 
 def encode_value(value):
@@ -77,6 +78,8 @@ def encode_value(value):
     return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
 
 def nix_string(text: str) -> str:
+    if any(ord(char) < 32 and char not in '\n\r\t' for char in text):
+        raise ValidationError('Strings cannot contain control characters other than tabs and newlines.')
     return json.dumps(text, ensure_ascii=False).replace("${", "\\${")
 
 def to_nix(value):
@@ -118,7 +121,11 @@ def parse(text: str, source="<rules>") -> list[Rule]:
         try:
             if not rule:
                 raise ValidationError("Empty rule name")
-            if rule in BOOLEAN_RULES or rule.startswith("pkg."):
+            if rule == 'desktop' and value not in valid_values:
+                parsed = parse_value(value)
+                if parsed not in {'gnome', 'plasma', 'kde', 'xfce', 'hyprland'}:
+                    raise ValidationError('desktop requires a boolean or a supported desktop name')
+            elif rule in BOOLEAN_RULES or rule.startswith("pkg."):
                 if value not in valid_values:
                     raise ValidationError(f"Invalid value for {rule}; expected true or false")
                 parsed = value == "true"
