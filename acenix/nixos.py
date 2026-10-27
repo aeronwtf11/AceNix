@@ -38,9 +38,9 @@ def run(argv, *, timeout=300):
         if len(details) > 16000:
             lines = details.splitlines()
             details = (
-                "\n".join(lines[:8])
+                "\n".join(lines[:8])[:4000]
                 + "\n[Output shortened; --verbose shows full diagnostics.]\n"
-                + "\n".join(lines[-45:])
+                + "\n".join(lines[-45:])[-10000:]
             )
         raise ToolError(f"{argv[0]} failed ({result.returncode}):\n{details}")
     return result.stdout

@@ -3,6 +3,24 @@ from acenix.errors import ToolError, ValidationError
 from acenix.nixos import NixOS, Target, discover, run
 
 
+def test_tool_error_bounds_even_single_line_diagnostics(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "acenix.nixos.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=1,
+            stderr="initial cause\n" + "x" * 50000 + "\nfinal cause",
+            stdout="",
+        ),
+    )
+    with pytest.raises(ToolError) as error:
+        run(["nix-build"])
+    message = str(error.value)
+    assert len(message) < 16000
+    assert "initial cause" in message and "final cause" in message
+
+
 def test_target_rejects_outside_editing_module(tmp_path):
     root = tmp_path / "native"
     root.mkdir()
