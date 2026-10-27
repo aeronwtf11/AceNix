@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import logging
 import re
+import pwd
 from urllib.parse import quote
 from .errors import ToolError, ValidationError, PermissionError
 from .rules import nix_string, to_nix, validate_attr, attr_parts, attr_name
@@ -28,14 +29,20 @@ def run(argv, *, timeout=300):
         raise ToolError(
             f"{argv[0]} exceeded {timeout} seconds; no success was recorded."
         ) from error
-    if result.returncode:
-        raise ToolError(
-            f"{argv[0]} failed ({result.returncode}):\n{result.stderr.strip() or result.stdout.strip()}"
-        )
     if result.stderr:
         logging.getLogger(__name__).debug(
             "%s diagnostic output: %s", argv[0], result.stderr.strip()
         )
+    if result.returncode:
+        details = result.stderr.strip() or result.stdout.strip()
+        if len(details) > 16000:
+            lines = details.splitlines()
+            details = (
+                "\n".join(lines[:8])
+                + "\n[Output shortened; --verbose shows full diagnostics.]\n"
+                + "\n".join(lines[-45:])
+            )
+        raise ToolError(f"{argv[0]} failed ({result.returncode}):\n{details}")
     return result.stdout
 
 
@@ -190,18 +197,19 @@ class NixOS:
         # Static options plus submodule child schemas: attrsOf uses <name> or
         # <name?> placeholders, which are metadata only, never emitted to source.
         body = f"""let
-          resolve = tree: parts: sources: readOnly:
-            if parts == [] then {{ option = tree; inherit sources readOnly; }} else
+          resolve = tree: parts: sources: editable: readOnly:
+            if parts == [] then {{ option = tree; inherit sources editable readOnly; }} else
             if lib.isOption tree then resolve (tree.type.getSubOptions [])
               (if builtins.elem tree.type.name ["attrsOf" "lazyAttrsOf"] then builtins.tail parts else parts)
               (sources ++ (map (d: toString d.file) (tree.definitionsWithLocations or [])))
+              (editable ++ (if (tree.highestPrio or 1500) == 1500 then [] else map (d: toString d.file) (tree.definitionsWithLocations or [])))
               (readOnly || (tree.readOnly or false)) else
             if builtins.hasAttr (builtins.head parts) tree then
-              resolve tree.${{builtins.head parts}} (builtins.tail parts) sources readOnly
-            else if builtins.hasAttr "<name>" tree then resolve tree."<name>" parts sources readOnly
-            else if builtins.hasAttr "<name?>" tree then resolve tree."<name?>" parts sources readOnly
+              resolve tree.${{builtins.head parts}} (builtins.tail parts) sources editable readOnly
+            else if builtins.hasAttr "<name>" tree then resolve tree."<name>" parts sources editable readOnly
+            else if builtins.hasAttr "<name?>" tree then resolve tree."<name?>" parts sources editable readOnly
             else throw "Unknown option or unsupported dynamic submodule path";
-          resolved = resolve n.options {to_nix(list(attr_parts(path)))} [] false;
+          resolved = resolve n.options {to_nix(list(attr_parts(path)))} [] [] false;
           o = resolved.option;
         in if !lib.isOption o then throw "Path names an option namespace, not an option" else {{
           name = {nix_string(path)};
@@ -210,6 +218,7 @@ class NixOS:
           description = if builtins.isString (o.description or "") then o.description or "" else "See NixOS manual";
           declarations = map toString (o.declarations or []);
           files = lib.unique ((map (d: toString d.file) (o.definitionsWithLocations or [])) ++ resolved.sources);
+          editableFiles = lib.unique ((if (o.highestPrio or 1500) == 1500 then [] else map (d: toString d.file) (o.definitionsWithLocations or [])) ++ resolved.editable);
           priority = o.highestPrio or null;
           default = if o ? default then
             let value = builtins.tryEval (builtins.deepSeq (render o.default) (render o.default));
@@ -306,7 +315,7 @@ class NixOS:
         info = self.info(path)
         root = self.target.root
         files = []
-        for name in info["files"]:
+        for name in info["editableFiles"]:
             file = Path(name)
             if self.target.flake and not file.resolve().is_relative_to(root):
                 # getFlake imports a store copy. Map only this exact flake's
@@ -389,7 +398,8 @@ class NixOS:
 
     def update(self):
         if self.target.flake:
-            return self.run(
+            before = (self.target.flake / "flake.lock").read_bytes()
+            self.run(
                 [
                     "nix",
                     "--extra-experimental-features",
@@ -401,7 +411,62 @@ class NixOS:
                 ],
                 timeout=1800,
             )
-        return self.run(["nix-channel", "--update"], timeout=1800)
+            return {
+                "mechanism": "flake",
+                "changed": before != (self.target.flake / "flake.lock").read_bytes(),
+            }
+        selected = Path(
+            self.run(["nix-instantiate", "--find-file", "nixpkgs"]).strip()
+        ).resolve()
+        actual = Path(self.eval("toString n.pkgs.path")).resolve()
+        # --find-file resolves symlinks, so it cannot identify the channel
+        # binding by itself. Keep the original search-path spelling as well;
+        # an explicitly pinned store source must not update an unrelated alias.
+        bindings = self.eval("builtins.nixPath")
+        binding = None
+        for entry in bindings:
+            if entry["prefix"] not in {"", "nixpkgs"}:
+                continue
+            candidate = Path(entry["path"])
+            if entry["prefix"] == "":
+                candidate /= "nixpkgs"
+            if candidate.exists():
+                binding = candidate.absolute()
+                break
+        names = [
+            line.split(None, 1)[0]
+            for line in self.run(["nix-channel", "--list"]).splitlines()
+            if line.strip()
+        ]
+        home = Path.home()
+        roots = [
+            home / ".nix-defexpr/channels",
+            Path(os.environ.get("XDG_STATE_HOME", home / ".local/state"))
+            / "nix/profiles/channels",
+            Path(os.environ.get("NIX_STATE_DIR", "/nix/var/nix"))
+            / "profiles/per-user"
+            / pwd.getpwuid(os.geteuid()).pw_name
+            / "channels",
+        ]
+        channels = []
+        for name in names:
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+                continue
+            for root in roots:
+                channel = root / name
+                if (
+                    binding == channel.absolute()
+                    and channel.exists()
+                    and channel.resolve() == selected == actual
+                ):
+                    channels.append(name)
+                    break
+        if not channels:
+            raise ValidationError(
+                "The selected nixpkgs is not supplied by a registered channel binding. Update its custom source explicitly; AceNix will not update unrelated channels or report a no-op as an update."
+            )
+        self.run(["nix-channel", "--update", *channels], timeout=1800)
+        return {"mechanism": "channels", "channels": channels}
 
 
 def discover(config=None, flake=None, host=None, module=None):

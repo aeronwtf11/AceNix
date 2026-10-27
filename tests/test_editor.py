@@ -109,3 +109,13 @@ def test_even_backslashes_do_not_hide_executable_interpolation():
 def test_escaped_literal_interpolation_remains_editable():
     source = '{ x = "\\${literal}"; }'
     assert Editor(source).set("x", "new") == '{ x = "new"; }'
+
+
+def test_expanded_module_config_edits_do_not_touch_option_declarations():
+    source = '{ pkgs, lib, ... }: { options.custom.value = lib.mkOption { default = "default"; }; config = { custom.value = "old"; environment.systemPackages = [ pkgs.vim ]; }; }'
+    changed = Editor(source).set("custom.value", "new")
+    assert changed == source.replace('"old"', '"new"')
+    added = Editor(changed).set("custom.enabled", True)
+    assert "enabled = true" in added
+    assert 'default = "default"' in added
+    assert "pkgs.hello" in Editor(added).packages(["hello"], [])

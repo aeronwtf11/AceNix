@@ -165,6 +165,13 @@ class Editor:
                 "Safe editing requires a literal module attribute set, optionally preceded by { ... }: . Use an imported module for let/mkMerge/computed module bodies."
             )
         self._set(first, ())
+        # Expanded NixOS modules keep settings under config, alongside options.
+        # Keep declarations intact and map native option paths into that block.
+        self.module_prefix = (
+            ("config",)
+            if any(b.path[0] in {"config", "options"} for b in self.bindings)
+            else ()
+        )
 
     def _name(self, token):
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_'-]*", token.text):
@@ -234,7 +241,7 @@ class Editor:
             index += 1
 
     def _binding(self, path):
-        path = attr_parts(path)
+        path = self.module_prefix + attr_parts(path)
         matches = [binding for binding in self.bindings if binding.path == path]
         if len(matches) > 1:
             raise ConflictError(
@@ -276,7 +283,7 @@ class Editor:
         return False
 
     def set(self, path, value):
-        names = attr_parts(path)
+        names = self.module_prefix + attr_parts(path)
         binding = self._binding(path)
         expression = to_nix(value)
         if binding:

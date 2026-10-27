@@ -342,12 +342,16 @@ def dispatch(args):
                 backup = store.root / ("flake-lock-" + digest(data) + ".json")
                 if not backup.exists():
                     atomic_write(backup, data)
-            backend.update()
+            updates = backend.update()
             store.write("preview.json", {})
             store.history(
                 {"operation": "update", "result": "updated", "target": target.identity}
             )
-            return {"result": "updated", "activation_performed": False}
+            return {
+                "result": "updated",
+                "activation_performed": False,
+                "updates": updates,
+            }
         if command in {"set", "setr", "install", "remove", "enable", "disable"}:
             if command == "set":
                 value = rules.parse_value(args.value)

@@ -10,16 +10,46 @@ let
   '' else ''
     boot.loader.grub = { enable = true; device = "/dev/vda"; forceInstall = true; };
   '';
-  configuration = pkgs.writeText "configuration.nix" ''
+  hardware = builtins.toFile "hardware-configuration.nix" ''
+    { ... }: {
+      boot.initrd.availableKernelModules = [ "virtio_pci" "virtio_blk" "virtio_scsi" "ahci" "sd_mod" ];
+      fileSystems."/" = { device = "/dev/disk/by-label/nixos"; fsType = "ext4"; };
+      ${lib.optionalString efi ''
+        fileSystems."/boot" = { device = "/dev/disk/by-label/ESP"; fsType = "vfat"; };
+      ''}
+      nixpkgs.hostPlatform = "${pkgs.stdenv.hostPlatform.system}";
+    }
+  '';
+  serviceText = enabled: ''
+    { ... }: {
+      # This comment and this imported module must survive every source edit.
+      services.openssh.enable = ${lib.boolToString enabled};
+    }
+  '';
+  builderOption = builtins.toFile "builder-option.nix" ''
+    { config, lib, ... }: {
+      options.acenix.testBuilderCommand = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        description = "A build hook used only by the disposable AceNix acceptance test.";
+      };
+      config.system.systemBuilderCommands = config.acenix.testBuilderCommand;
+    }
+  '';
+  template = ''
     { lib, pkgs, modulesPath, ... }: {
       imports = [
-        ./hardware-configuration.nix
-        ./services.nix
+        @HARDWARE@
+        @SERVICES@
+        @BUILDER@
+        (modulesPath + "/profiles/minimal.nix")
         (modulesPath + "/testing/test-instrumentation.nix")
       ];
       ${bootSettings}
       documentation.enable = false;
-      networking.hostName = "acenix-before";
+      hardware.firmware = [ ];
+      boot.supportedFilesystems = [ "ext4" "vfat" ];
+      networking.hostName = @HOSTNAME@;
       system.stateVersion = "26.05";
       system.switch.enable = true;
       nix.settings = {
@@ -28,15 +58,29 @@ let
         connect-timeout = 1;
         max-jobs = 2;
       };
-      environment.systemPackages = [ (pkgs.callPackage ${source}/package.nix { }) pkgs.vim ];
+      environment.systemPackages = [ (pkgs.callPackage ${source}/package.nix { }) pkgs.vim @HELLO@ ];
     }
   '';
-  serviceModule = pkgs.writeText "services.nix" ''
-    { ... }: {
-      # This comment and this imported module must survive every source edit.
-      services.openssh.enable = false;
-    }
-  '';
+  render = hardwarePath: servicePath: builderPath: hostname: hello:
+    lib.replaceStrings [ "@HARDWARE@" "@SERVICES@" "@BUILDER@" "@HOSTNAME@" "@HELLO@" ]
+      [ hardwarePath servicePath builderPath (builtins.toJSON hostname) (lib.optionalString hello "pkgs.hello") ] template;
+  configuration = builtins.toFile "configuration.nix"
+    (render "./hardware-configuration.nix" "./services.nix" "./builder-option.nix" "acenix-before" false);
+  serviceModule = builtins.toFile "services.nix" (serviceText false);
+  generation = hostname: ssh: hello:
+    let
+      module = builtins.toFile "configuration.nix"
+        (render (toString hardware) (toString (builtins.toFile "services.nix" (serviceText ssh))) (toString builderOption) hostname hello);
+    in (import (nixpkgsPath + "/nixos/lib/eval-config.nix") {
+      system = pkgs.stdenv.hostPlatform.system;
+      modules = [ module ];
+    }).config.system.build.toplevel;
+  generations = [
+    (generation "acenix-before" false false)
+    (generation "acenix-a" true true)
+    (generation "acenix-b" true false)
+    (generation "acenix-c" true false)
+  ];
   localFlake = pkgs.writeText "flake.nix" ''
     {
       inputs.nixpkgs.url = "path:${pkgs.path}";
@@ -47,6 +91,13 @@ let
         };
       };
     }
+  '';
+  localChannel = pkgs.runCommand "acenix-channel.tar.gz" {
+    nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
+  } ''
+    mkdir payload
+    ln -s ${nixpkgsPath} payload/nixpkgs
+    tar -czf $out -C payload nixpkgs
   '';
 in
 pkgs.testers.runNixOSTest {
@@ -81,7 +132,10 @@ pkgs.testers.runNixOSTest {
     system.extraDependencies = [
       pkgs.grub2 pkgs.hello source nixpkgsPath pkgs.stdenvNoCC pkgs.makeInitrdNGTool
       pkgs.kmod pkgs.perl pkgs.nukeReferences pkgs.cpio pkgs.zstd pkgs.gzip
-    ] ++ pkgs.jq.all;
+      # Copied activation scripts are not in a system's runtime closure. Their
+      # native writeShellApplication builders need these tools for a new build.
+      pkgs.python3Minimal pkgs.makeWrapper pkgs.gnused localChannel
+    ] ++ pkgs.jq.all ++ generations;
     system.switch.enable = true;
     services.openssh.enable = false;
     networking.hostName = "acenix-before";
@@ -107,9 +161,10 @@ pkgs.testers.runNixOSTest {
     machine.start()
     machine.wait_for_unit("multi-user.target")
     machine.succeed("udevadm settle")
-    machine.succeed("nixos-generate-config")
+    machine.copy_from_host("${hardware}", "/etc/nixos/hardware-configuration.nix")
     machine.copy_from_host("${configuration}", "/etc/nixos/configuration.nix")
     machine.copy_from_host("${serviceModule}", "/etc/nixos/services.nix")
+    machine.copy_from_host("${builderOption}", "/etc/nixos/builder-option.nix")
     machine.succeed("chmod 644 /etc/nixos/*.nix")
     ${lib.optionalString flakeMode ''
       machine.copy_from_host("${localFlake}", "/etc/nixos/flake.nix")
@@ -134,13 +189,21 @@ pkgs.testers.runNixOSTest {
         return machine.succeed("readlink -f /nix/var/nix/profiles/system").strip()
 
     def sources():
-        return machine.succeed("sha256sum /etc/nixos/configuration.nix /etc/nixos/services.nix").strip()
+        return machine.succeed("sha256sum /etc/nixos/*.nix").strip()
 
     with subtest("initial source-matching activation installs the actual native configuration"):
         result = command("apply --mode switch" + authorization)
         assert result["result"] == "activated", result
         assert machine.succeed("hostname").strip() == "acenix-before"
         initial_runtime, initial_profile = current(), profile()
+
+    with subtest("a new uncached system builder really executes in the guest"):
+        command("set acenix.testBuilderCommand 'str:touch $out/acenix-real-build'")
+        before = sources()
+        result = command("apply --mode build")
+        machine.succeed("test -f " + result['system'] + "/acenix-real-build")
+        assert sources() == before and current() == initial_runtime
+        command("set acenix.testBuilderCommand 'str:'")
 
     with subtest("real build-only preserves native files, runtime and boot profile"):
         command("setr hostname:acenix-a")
@@ -171,6 +234,7 @@ pkgs.testers.runNixOSTest {
         assert current() == tested_runtime and profile() == tested_runtime
         rows = command("generations")["generations"]
         generation_a = next(row["generation"] for row in rows if row["profile_default"])
+        assert next(row for row in rows if row['generation'] == generation_a)['boot_default'] is True, rows
         machine.reboot()
         machine.wait_for_unit("multi-user.target")
         assert machine.succeed("hostname").strip() == "acenix-a"
@@ -201,12 +265,12 @@ pkgs.testers.runNixOSTest {
         assert command("get networking.hostName") == "acenix-a"
 
     with subtest("real builder failure cannot commit native sources"):
-        command("set system.extraSystemBuilderCmds 'str:echo ACENIX_EXPECTED_BUILD_FAILURE >&2; exit 1'")
+        command("set acenix.testBuilderCommand 'str:echo ACENIX_EXPECTED_BUILD_FAILURE >&2; exit 1'")
         before, running, boot_profile = sources(), current(), profile()
         failure = machine.fail(cli + "apply --mode build --json")
         assert 'ACENIX_EXPECTED_BUILD_FAILURE' in failure, failure
         assert sources() == before and current() == running and profile() == boot_profile
-        command("set system.extraSystemBuilderCmds 'str:'")
+        command("set acenix.testBuilderCommand 'str:'")
 
     with subtest("stale preview and unprivileged writes are rejected"):
         command("setr hostname:acenix-c")
@@ -233,6 +297,13 @@ pkgs.testers.runNixOSTest {
         ${lib.optionalString flakeMode ''
           result = command("update" + authorization)
           assert result["result"] == "updated", result
+          assert current() == running
+        ''}
+        ${lib.optionalString (!flakeMode) ''
+          machine.succeed("nix-channel --add file://${localChannel} acenix-test; nix-channel --update acenix-test")
+          cli = cli.replace("NIX_PATH=nixpkgs=${nixpkgsPath}", "NIX_PATH=nixpkgs=/root/.nix-defexpr/channels/acenix-test")
+          result = command("update" + authorization)
+          assert result['updates']['channels'] == ['acenix-test'], result
           assert current() == running
         ''}
   '';

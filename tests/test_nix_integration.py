@@ -223,3 +223,25 @@ def test_small_large_float_literals_are_real_nix_values(native):
     backend, _ = native
     for number in [1e-12, 1.5e20, -0.0]:
         assert backend.eval(to_nix(number)) == number
+
+
+def test_custom_declared_option_and_expanded_imported_module(native):
+    backend, store = native
+    module = backend.target.root / "services.nix"
+    original = """{ lib, ... }: {
+      options.acenix.example = lib.mkOption { type = lib.types.str; default = "default"; };
+      config.services.openssh.enable = false;
+    }"""
+    module.write_text(original)
+    plan = Engine(backend).plan(
+        parse("acenix.example:requested\nservices.openssh.enable:true"), {}
+    )
+    assert set(plan.changes) == {"configuration.nix", "services.nix"}
+    assert 'default = "default"' in plan.changes["services.nix"][1].decode()
+    assert (
+        'acenix.example = "requested"' in plan.changes["configuration.nix"][1].decode()
+    )
+    assert (
+        Transactions(backend, store).preview(plan)["validation"]
+        == "candidate evaluated"
+    )
