@@ -6,7 +6,7 @@ from acenix.cli import main, parser
 def test_version(capsys):
     with pytest.raises(SystemExit) as error:
         main(["--version"])
-    assert error.value.code == 0 and "AceNix 0.2.0" in capsys.readouterr().out
+    assert error.value.code == 0 and "AceNix 1.0.0" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

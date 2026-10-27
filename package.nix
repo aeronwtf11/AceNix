@@ -1,7 +1,7 @@
 { lib, python3Packages, makeWrapper, nix, nixos-rebuild, systemd }:
 python3Packages.buildPythonApplication {
   pname = "acenix";
-  version = "0.2.0";
+  version = "1.0.0";
   pyproject = true;
   src = lib.cleanSourceWith {
     src = ./.;

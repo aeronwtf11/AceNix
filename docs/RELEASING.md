@@ -83,6 +83,12 @@ without Internet access. It also retains direct build inputs, including copied
 activation scripts, rather than the full compiler/bootstrap source graph. The
 uncached success/failure builders still execute in the guest.
 
+Keep the `nixpkgs` and `nixpkgs-archive` input URLs on the same revision when
+refreshing the test baseline. The locked archive supplies offline channel/flake
+inputs; the fixture verifies its unpacked Nixpkgs tree against the locked tree
+hash. Using the immutable archive also avoids repeatedly hashing a large local
+path input during nested flake evaluations.
+
 ## Release bookkeeping
 
 Keep `pyproject.toml`, `package.nix`, `acenix.__version__` and the CLI version test

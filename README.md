@@ -10,11 +10,11 @@ AceNix is a Python CLI for managing native NixOS configuration. It uses NixOS's
 real option metadata, module evaluation, packages, system builds and generations.
 It does not replace Nix, Nixpkgs or systemd.
 
-Version **0.2.0** implements the development milestones below. It is not yet
-labelled v1.0: disposable NixOS VM activation/build/rollback verification remains
-a release gate. See [implementation status](docs/IMPLEMENTATION.md) and the
-[release checklist](docs/RELEASING.md). No live system was used for destructive
-integration testing.
+Version **1.0.0** includes native option and source management, declarative
+packages and services, profiles, transactional activation, recovery and native
+generation rollback. See [verification evidence and supported limits](docs/IMPLEMENTATION.md)
+and the [release checklist](docs/RELEASING.md). Integration tests use disposable
+NixOS systems.
 
 ## Installation
 
