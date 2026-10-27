@@ -25,7 +25,7 @@ The checkout is mounted read-only.
 
 ```sh
 nix develop --command env ACENIX_NIX_TESTS=1 pytest -m nix
-nix flake check --no-build
+nix flake check --no-build --all-systems
 nix build .#checks.x86_64-linux.package --print-build-logs
 ```
 
