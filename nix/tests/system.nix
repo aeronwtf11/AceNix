@@ -32,16 +32,7 @@ let
       services.openssh.enable = ${lib.boolToString enabled};
     }
   '';
-  builderOption = builtins.toFile "builder-option.nix" ''
-    { config, lib, ... }: {
-      options.acenix.testBuilderCommand = lib.mkOption {
-        type = lib.types.str;
-        default = "";
-        description = "A build hook used only by the disposable AceNix acceptance test.";
-      };
-      config.system.systemBuilderCommands = config.acenix.testBuilderCommand;
-    }
-  '';
+  builderOption = ./builder-option.nix;
   template = ''
     { lib, pkgs, modulesPath, acenixSource, ... }: {
       _module.args.acenixSource = ${source};
@@ -76,11 +67,47 @@ let
   serviceModule = builtins.toFile "services.nix" (serviceText false);
   generation = hostname: ssh: hello:
     let
-      module = builtins.toFile "configuration.nix"
-        (render (toString hardware) (toString (builtins.toFile "services.nix" (serviceText ssh))) (toString builderOption) hostname hello);
       arguments = {
-      system = pkgs.stdenv.hostPlatform.system;
-      modules = [ module ];
+        system = pkgs.stdenv.hostPlatform.system;
+        # Evaluate module values directly. Importing a generated toFile module
+        # requires store writes, which `flake check --no-build` forbids.
+        modules = [ ({ pkgs, modulesPath, ... }: {
+          imports = [
+            builderOption
+            (modulesPath + "/profiles/minimal.nix")
+            (modulesPath + "/testing/test-instrumentation.nix")
+          ];
+          boot.initrd.availableKernelModules = [ "virtio_pci" "virtio_blk" "virtio_scsi" "ahci" "sd_mod" ];
+          boot.growPartition = true;
+          boot.loader = if efi then {
+            grub.enable = false;
+            systemd-boot.enable = true;
+            efi.canTouchEfiVariables = true;
+          } else {
+            grub = { enable = true; device = "/dev/vda"; forceInstall = true; };
+          };
+          fileSystems = {
+            "/" = { device = "/dev/disk/by-label/nixos"; fsType = "ext4"; autoResize = true; };
+          } // lib.optionalAttrs efi {
+            "/boot" = { device = "/dev/disk/by-label/ESP"; fsType = "vfat"; };
+          };
+          nixpkgs.hostPlatform = arguments.system;
+          documentation.enable = false;
+          hardware.firmware = [ ];
+          boot.supportedFilesystems = [ "ext4" "vfat" ];
+          networking.hostName = hostname;
+          services.openssh.enable = ssh;
+          system.stateVersion = "26.05";
+          system.switch.enable = true;
+          nix.settings = {
+            experimental-features = [ "nix-command" "flakes" ];
+            substituters = [ ];
+            connect-timeout = 1;
+            max-jobs = 2;
+          };
+          environment.systemPackages = [ (pkgs.callPackage ../../package.nix { }) pkgs.vim ]
+            ++ lib.optional hello pkgs.hello;
+        }) ];
       };
     in (if flakeMode then flakePkgs.lib.nixosSystem arguments
         else import (nixpkgsPath + "/nixos/lib/eval-config.nix") arguments).config.system.build.toplevel;
