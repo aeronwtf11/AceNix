@@ -3,11 +3,18 @@
 from contextlib import contextmanager
 import json
 import os
+import re
 from pathlib import Path
 import tempfile
 import uuid
 from .engine import source_snapshot
-from .errors import AceNixError, ConflictError, PermissionError, ToolError
+from .errors import (
+    AceNixError,
+    ConflictError,
+    PermissionError,
+    ToolError,
+    ValidationError,
+)
 from .nixos import NixOS
 from .storage import atomic_write, digest, now, safe_path
 
@@ -115,7 +122,18 @@ class Transactions:
                 )
         with self.candidate(plan) as target:
             self.validate(plan, target)
-            system = self.backend.build(target)
+            try:
+                system = self.backend.build(target)
+            except ToolError:
+                self.store.history(
+                    {
+                        "operation": "build",
+                        "result": "failed",
+                        "target": plan.target,
+                        "sources_changed": False,
+                    }
+                )
+                raise
             if mode == "build":
                 self.store.history(
                     {
@@ -261,8 +279,51 @@ class Transactions:
     def backups(self):
         result = []
         for path in sorted((self.store.root / "backups").glob("*/manifest.json")):
-            result.append(json.loads(path.read_text()))
+            result.append(self._read_manifest(path))
         return result
+
+    @staticmethod
+    def _read_manifest(path):
+        try:
+            data = json.loads(safe_path(path).read_text())
+        except ValueError as error:
+            raise ValidationError(f"Invalid backup journal {path}: {error}") from error
+        valid_id = path.parent.name
+        if (
+            not re.fullmatch(r"[0-9a-f]{32}", valid_id)
+            or not isinstance(data, dict)
+            or data.get("id") != valid_id
+        ):
+            raise ValidationError(f"Backup journal identity mismatch: {path}")
+        required_strings = ["target", "root", "status", "system", "mode"]
+        if (
+            any(not isinstance(data.get(key), str) for key in required_strings)
+            or not isinstance(data.get("files"), dict)
+            or not isinstance(data.get("previous_state"), dict)
+        ):
+            raise ValidationError(f"Incomplete backup journal: {path}")
+        if data["status"] not in {
+            "prepared",
+            "completed",
+            "recovery-required",
+            "sources-restored",
+        } or data["mode"] not in {"test", "boot", "switch"}:
+            raise ValidationError(f"Unknown backup transaction state: {path}")
+        for name, hashes in data["files"].items():
+            relative = Path(name)
+            if (
+                not name
+                or relative.is_absolute()
+                or ".." in relative.parts
+                or not isinstance(hashes, dict)
+                or any(
+                    not isinstance(hashes.get(key), str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", hashes[key])
+                    for key in ["before", "after"]
+                )
+            ):
+                raise ValidationError(f"Unsafe backup file record in {path}")
+        return data
 
     def recover(self, identifier, confirm):
         if (
@@ -274,7 +335,7 @@ class Transactions:
         path = self.store.root / "backups" / identifier / "manifest.json"
         if not path.is_file():
             raise ToolError(f"Backup not found: {identifier}")
-        manifest = json.loads(path.read_text())
+        manifest = self._read_manifest(path)
         if manifest["target"] != self.backend.target.identity or manifest[
             "root"
         ] != str(self.backend.target.root):

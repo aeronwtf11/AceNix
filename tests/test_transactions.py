@@ -182,3 +182,18 @@ def test_old_recovery_cannot_discard_newer_managed_state(transaction):
     with pytest.raises(ConflictError, match="later transaction"):
         t.recover(first["backup"], lambda *args: None)
     assert t.store.read()["managed_packages"] == {"hello": "other.nix"}
+
+
+def test_corrupt_journal_cannot_redirect_recovery_write(transaction):
+    import json
+    from acenix.errors import ValidationError
+
+    t, p, config, rules = transaction
+    result = apply(t, p, rules)
+    path = t.store.root / "backups" / result["backup"] / "manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest["id"] = "../../outside"
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(ValidationError, match="identity"):
+        t.recover(result["backup"], lambda *args: None)
+    assert config.read_bytes() == p.changes["configuration.nix"][1]

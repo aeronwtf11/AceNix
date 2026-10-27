@@ -67,3 +67,34 @@ def test_concurrent_state_writers_are_serialized(tmp_path):
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(increment, range(12)))
     assert store.read()["count"] == 12
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "[]",
+        '"string"',
+        "null",
+        '{"managed_packages": []}',
+        '{"managed_packages":{"hello":"../../outside"}}',
+    ],
+)
+def test_corrupt_state_is_rejected(tmp_path, content):
+    store = Store(tmp_path / "state")
+    store.prepare()
+    (store.root / "state.json").write_text(content)
+    with pytest.raises(ValidationError):
+        store.read()
+
+
+def test_state_document_path_cannot_escape_root(tmp_path):
+    store = Store(tmp_path / "state")
+    store.prepare()
+    with pytest.raises(ValidationError):
+        store.read("../outside.json")
+
+
+def test_read_only_inspection_does_not_create_state(tmp_path):
+    store = Store(tmp_path / "state")
+    assert store.inspect()["exists"] is False
+    assert not store.root.exists()

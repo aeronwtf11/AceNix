@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import stat
 import tempfile
@@ -65,14 +66,56 @@ class Store:
         self.root = root.absolute()
 
     def prepare(self):
+        self.inspect(create=True)
+
+    def inspect(self, *, create=False):
         if self.root.is_symlink() or self.root.parent.resolve() != self.root.parent:
             raise ConflictError(f"Unsafe state directory: {self.root}")
-        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if create:
+            self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        elif not self.root.exists():
+            return {"exists": False, "path": str(self.root)}
         info = self.root.stat()
-        if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077:
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) & 0o077
+        ):
             raise ConflictError(
                 f"State directory must be owned by you and mode 0700: {self.root}"
             )
+        return {"exists": True, "private": True, "path": str(self.root)}
+
+    def document(self, name):
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name):
+            raise ValidationError("State document names must be simple filenames.")
+        return safe_path(self.root / name)
+
+    @staticmethod
+    def validate(name, value):
+        expected = list if name == "history.json" else dict
+        if not isinstance(value, expected):
+            raise ValidationError(
+                f"{name} must contain a JSON {'array' if expected is list else 'object'}."
+            )
+        if name == "history.json" and not all(isinstance(item, dict) for item in value):
+            raise ValidationError("History entries must be JSON objects.")
+        if name == "state.json":
+            if value.get("target") is not None and not isinstance(value["target"], str):
+                raise ValidationError("Managed target identity must be a string.")
+            packages = value.get("managed_packages", {})
+            if not isinstance(packages, dict) or not all(
+                isinstance(k, str)
+                and isinstance(v, str)
+                and v
+                and not Path(v).is_absolute()
+                and ".." not in Path(v).parts
+                for k, v in packages.items()
+            ):
+                raise ValidationError(
+                    "Managed packages must map attribute names to relative source files."
+                )
+        return value
 
     @contextmanager
     def lock(self):
@@ -85,18 +128,19 @@ class Store:
             os.close(fd)
 
     def read(self, name="state.json", default=None):
-        path = safe_path(self.root / name)
+        path = self.document(name)
         if not path.exists():
             return {} if default is None else default
         try:
-            return json.loads(path.read_text())
+            return self.validate(name, json.loads(path.read_text()))
         except (ValueError, OSError) as error:
             raise ValidationError(f"Cannot read state {path}: {error}") from error
 
     def write(self, name, value):
         self.prepare()
+        self.validate(name, value)
         atomic_write(
-            self.root / name,
+            self.document(name),
             json.dumps(value, indent=2, ensure_ascii=False).encode() + b"\n",
         )
 

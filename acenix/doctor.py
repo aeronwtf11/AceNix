@@ -3,10 +3,11 @@
 import os
 from pathlib import Path
 import shutil
-from .errors import AceNixError, ConflictError
+from .errors import AceNixError, ConflictError, PermissionError
 from .nixos import NixOS, discover
 from .rules import load
 from .transactions import Transactions
+from .engine import Engine
 
 
 def diagnose(args, store):
@@ -53,16 +54,40 @@ def diagnose(args, store):
     checks.append({"check": "native target", "status": "ok", "detail": target.identity})
     record("NixOS evaluation and assertions", backend.check)
     record("package management", lambda: backend.package("hello"))
-    record(
-        "source permissions",
-        lambda: {
+
+    def permissions():
+        details = {
             "directory_writable": os.access(target.root, os.W_OK),
             "config_writable": os.access(
                 target.config or target.flake / "flake.nix", os.W_OK
             ),
-        },
-    )
+        }
+        if not all(details.values()):
+            raise PermissionError(
+                f"Native source writes need explicit administrator permissions: {details}"
+            )
+        return details
+
+    record("source permissions", permissions)
+    record("private state directory", store.inspect)
     record("managed state", store.read)
+    record(
+        "pending rule types and source conflicts",
+        lambda: Engine(backend).plan(load(args.rules), store.read()).public(),
+    )
+    record(
+        "native store connection",
+        lambda: backend.run(
+            [
+                "nix",
+                "--extra-experimental-features",
+                "nix-command",
+                "store",
+                "ping",
+                "--json",
+            ]
+        ),
+    )
 
     def backups():
         manifests = Transactions(backend, store).backups()

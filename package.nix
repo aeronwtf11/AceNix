@@ -15,7 +15,7 @@ python3Packages.buildPythonApplication {
   build-system = [ python3Packages.setuptools ];
   nativeBuildInputs = [ makeWrapper ];
   nativeCheckInputs = [ python3Packages.pytestCheckHook ];
-  pytestFlags = [ "-m" "not nix" ];
+  disabledTestMarks = [ "nix" ];
   pythonImportsCheck = [ "acenix" "core.main" ];
   postFixup = ''
     wrapProgram $out/bin/acenix --prefix PATH : ${lib.makeBinPath [ nix nixos-rebuild systemd ]}

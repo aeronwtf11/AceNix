@@ -80,3 +80,28 @@ def test_traditional_build_arguments(tmp_path):
         f"nixos-config={config}",
         "--no-out-link",
     ]
+
+
+def test_package_search_uses_target_catalogue_and_nested_results(tmp_path):
+    import json
+
+    config = tmp_path / "configuration.nix"
+    config.write_text("{}")
+    commands = []
+
+    def runner(args, **kwargs):
+        commands.append(args)
+        return json.dumps(
+            {
+                "legacyPackages.target.python3Packages.pytest": {
+                    "pname": "pytest",
+                    "description": "tests",
+                    "version": "8",
+                }
+            }
+        )
+
+    result = NixOS(Target(config=config), runner).package_search("pytest")
+    assert result["attributes"] == ["python3Packages.pytest"]
+    assert commands[0][-3:] == ["--", "", "pytest"]
+    assert str(config) in commands[0][commands[0].index("--expr") + 1]

@@ -101,6 +101,8 @@ def parser():
         search = sub.add_parser("search")
         output_flags(search)
         search.add_argument("query")
+        if name == "packages":
+            search.add_argument("--limit", type=int, default=30)
         if name != "services":
             info = sub.add_parser("info")
             output_flags(info)
@@ -259,7 +261,7 @@ def dispatch(args):
         if args.action == "list":
             return backend.get("environment.systemPackages")
         if args.action == "search":
-            return backend.package_search(args.query)
+            return backend.package_search(args.query, args.limit)
         return backend.package(args.name)
     if command == "services":
         paths = [

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import logging
+import re
 from urllib.parse import quote
 from .errors import ToolError, ValidationError
 from .rules import nix_string, to_nix, validate_attr, attr_parts, attr_name
@@ -339,12 +340,44 @@ class NixOS:
           }}""")
 
     def package_search(self, query, limit=30):
-        names = self.eval("builtins.attrNames n.pkgs")
-        matches = [name for name in names if query.casefold() in name.casefold()]
+        if not query or len(query) > 256 or not 1 <= limit <= 10000:
+            raise ValidationError(
+                "Search requires 1–256 characters and a limit between 1 and 10000."
+            )
+        expression = f"let n = {self.target.expression()}; in {{ legacyPackages.target = n.pkgs; }}"
+        # The legacyPackages wrapper uses native recursive search and its normal
+        # handling of unavailable/broken packages, against this target's pkgs.
+        data = json.loads(
+            self.run(
+                [
+                    "nix",
+                    "--extra-experimental-features",
+                    "nix-command flakes",
+                    "search",
+                    "--impure",
+                    "--json",
+                    "--expr",
+                    expression,
+                    "--",
+                    "",
+                    re.escape(query),
+                ]
+            )
+        )
+        prefix = "legacyPackages.target."
+        matches = sorted(
+            (key[len(prefix) :], metadata)
+            for key, metadata in data.items()
+            if key.startswith(prefix)
+        )
         return {
-            "attributes": matches[:limit],
+            "attributes": [name for name, _ in matches[:limit]],
+            "results": [
+                dict(attribute=name, **metadata) for name, metadata in matches[:limit]
+            ],
             "total": len(matches),
-            "scope": "Top-level attributes of the selected nixpkgs; info verifies installability.",
+            "limit": limit,
+            "scope": "Native recursive search of the selected target's nixpkgs, including overlays.",
         }
 
     def update(self):
