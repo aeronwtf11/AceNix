@@ -186,6 +186,17 @@ def test_refuse_unowned_package_removal(native):
         Engine(backend).plan(parse("pkg.vim:false"), {})
 
 
+@pytest.mark.parametrize("second", ["true", "false"])
+def test_duplicate_real_package_aliases_are_refused(native, second):
+    backend, _ = native
+    assert (
+        backend.package("hello")["storePath"]
+        == backend.package("pkgs.hello")["storePath"]
+    )
+    with pytest.raises(ConflictError, match="same package"):
+        Engine(backend).plan(parse("pkg.hello:true\npkg.pkgs.hello:" + second), {})
+
+
 def test_locked_flake_and_imported_source_editing(native):
     import json
 

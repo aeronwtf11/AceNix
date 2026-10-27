@@ -54,6 +54,7 @@ def mapped(backend, rules):
     for rule in rules:
         if rule.key.startswith("pkg."):
             packages[rule.key[4:]] = rule.value
+            origins[rule.key] = rule.location
         elif rule.key == "desktop":
             desktop = rule
         elif rule.key == "fastfetch":
@@ -331,9 +332,14 @@ class Engine:
                 plan.high_impact.append(path)
         installed = backend.get("environment.systemPackages") if packages else []
         installed_paths = {p.get("storePath") for p in installed if isinstance(p, dict)}
-        additions, removals = [], {}
+        additions, removals, package_names = [], {}, {}
         for attr, wanted in packages.items():
             package = backend.package(attr)
+            previous = package_names.setdefault(package["storePath"], attr)
+            if previous != attr:
+                raise ConflictError(
+                    f"{origins['pkg.' + attr]}: {attr!r} and {previous!r} refer to the same package; keep a single package rule ({origins['pkg.' + previous]})."
+                )
             if wanted:
                 if package["broken"] or not package["available"]:
                     raise ValidationError(

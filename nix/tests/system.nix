@@ -74,7 +74,9 @@ let
         (render (toString hardware) (toString (builtins.toFile "services.nix" (serviceText ssh))) (toString builderOption) hostname hello);
     in (import (nixpkgsPath + "/nixos/lib/eval-config.nix") {
       system = pkgs.stdenv.hostPlatform.system;
-      modules = [ module ];
+      # nixpkgs.lib.nixosSystem injects its source into flake systems. Include
+      # that same native module when prebuilding their offline input closures.
+      modules = [ module ] ++ lib.optional flakeMode { nixpkgs.flake.source = nixpkgsPath; };
     }).config.system.build.toplevel;
   generations = [
     (generation "acenix-before" false false)
