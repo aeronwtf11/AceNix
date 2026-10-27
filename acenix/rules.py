@@ -7,6 +7,7 @@ handling and hostname rule are preserved here and extended with typed values.
 from dataclasses import dataclass
 import json
 import math
+from decimal import Decimal
 import re
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,7 @@ ALIASES = {
     "printers": "services.printing.enable",
 }
 BOOLEAN_RULES = set(t_or_f_rules + ["audio", "printers", "fastfetch"])
-ATTR = re.compile(r"^[A-Za-z_][A-Za-z0-9_'-]*(?:\.[A-Za-z_][A-Za-z0-9_'-]*)*$")
+IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_'-]*")
 
 
 @dataclass(frozen=True)
@@ -48,12 +49,84 @@ class Rule:
         return f"{self.source}:{self.line}"
 
 
+def attr_parts(path: str) -> tuple[str, ...]:
+    """Parse dotted names with JSON-quoted components, without executing Nix."""
+    if not isinstance(path, str) or not path or len(path) > 4096:
+        raise ValidationError("An option/package path must contain 1–4096 characters.")
+    parts, index = [], 0
+    decoder = json.JSONDecoder()
+    while index < len(path):
+        if path[index] == '"':
+            try:
+                part, index = decoder.raw_decode(path, index)
+            except ValueError as error:
+                raise ValidationError(
+                    f"Invalid quoted attribute in {path!r}: {error}"
+                ) from error
+            if any(ord(char) < 32 for char in part):
+                raise ValidationError(
+                    "Attribute names cannot contain control characters."
+                )
+        else:
+            match = IDENTIFIER.match(path, index)
+            if not match:
+                raise ValidationError(
+                    f"Invalid option/package path {path!r}; quote components containing punctuation."
+                )
+            part, index = match.group(), match.end()
+        parts.append(part)
+        if index == len(path):
+            return tuple(parts)
+        if path[index] != "." or index + 1 == len(path):
+            raise ValidationError(f"Invalid attribute separator in {path!r}")
+        index += 1
+    raise ValidationError(f"Invalid option/package path {path!r}")
+
+
+def attr_name(parts, *, nix=False):
+    quote = nix_string if nix else lambda value: json.dumps(value, ensure_ascii=False)
+    keywords = (
+        {
+            "if",
+            "then",
+            "else",
+            "assert",
+            "with",
+            "let",
+            "in",
+            "rec",
+            "inherit",
+            "or",
+            "true",
+            "false",
+            "null",
+        }
+        if nix
+        else set()
+    )
+    return ".".join(
+        part if IDENTIFIER.fullmatch(part) and part not in keywords else quote(part)
+        for part in parts
+    )
+
+
 def validate_attr(path: str) -> str:
-    if not ATTR.fullmatch(path):
-        raise ValidationError(
-            f"Invalid option/package path {path!r}; use dotted attribute names."
-        )
-    return path
+    return attr_name(attr_parts(path))
+
+
+def split_rule(line):
+    """Preserve first-colon syntax, excluding colons inside quoted key names."""
+    quoted, escaped = False, False
+    for index, char in enumerate(line):
+        if escaped:
+            escaped = False
+        elif quoted and char == "\\":
+            escaped = True
+        elif char == '"':
+            quoted = not quoted
+        elif char == ":" and not quoted:
+            return line[:index].strip(), line[index + 1 :].strip()
+    raise ValidationError("Invalid syntax; expected rule:value")
 
 
 def parse_value(text: str, *, string=False):
@@ -122,6 +195,11 @@ def to_nix(value):
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         if isinstance(value, float) and not math.isfinite(value):
             raise ValidationError("Nix numbers must be finite.")
+        if isinstance(value, int) and not -(2**63) <= value < 2**63:
+            raise ValidationError("Nix integers must fit in a signed 64-bit value.")
+        if isinstance(value, float):
+            text = format(Decimal(str(value)), "f")
+            return text if "." in text else text + ".0"
         return repr(value)
     if isinstance(value, str):
         return nix_string(value)
@@ -149,13 +227,8 @@ def parse(text: str, source="<rules>") -> list[Rule]:
             if section not in {"system", "packages", "options", "extras"}:
                 errors.append(f"{source}:{line_number}: Unknown section {section!r}")
             continue
-        if ":" not in systemline:
-            errors.append(
-                f"{source}:{line_number}: Invalid syntax; expected rule:value"
-            )
-            continue
-        rule, value = (part.strip() for part in systemline.split(":", 1))
         try:
+            rule, value = split_rule(systemline)
             if not rule:
                 raise ValidationError("Empty rule name")
             if rule == "desktop" and value not in valid_values:
@@ -181,14 +254,14 @@ def parse(text: str, source="<rules>") -> list[Rule]:
                     value, string=rule in input_rules + ["timezone", "locale"]
                 )
             if rule.startswith("pkg."):
-                validate_attr(rule[4:])
+                rule = "pkg." + validate_attr(rule[4:])
                 identity = rule
             elif rule in ALIASES:
                 identity = ALIASES[rule]
             elif rule in {"desktop", "user", "fastfetch"}:
                 identity = rule
-            elif "." in rule:
-                identity = validate_attr(rule)
+            elif "." in rule or rule.startswith('"'):
+                rule = identity = validate_attr(rule)
             else:
                 raise ValidationError(f"Unknown rule: {rule}")
             if identity in seen:
@@ -212,6 +285,8 @@ def load(path: Path):
 def update(text: str, key: str, value, section="options") -> str:
     """Change only the requested rule line, preserving comments and other lines."""
     existing = parse(text)
+    if key not in ALIASES and key not in {"desktop", "user", "fastfetch"}:
+        key = validate_attr(key)
     identity = ALIASES.get(key, key)
     matches = [r for r in existing if ALIASES.get(r.key, r.key) == identity]
     lines = text.splitlines(keepends=True)

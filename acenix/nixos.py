@@ -8,7 +8,7 @@ import subprocess
 import logging
 from urllib.parse import quote
 from .errors import ToolError, ValidationError
-from .rules import nix_string, to_nix, validate_attr
+from .rules import nix_string, to_nix, validate_attr, attr_parts, attr_name
 
 
 def flake_ref(path):
@@ -162,51 +162,53 @@ class NixOS:
             raise ToolError("Nix returned invalid JSON.") from error
 
     def get(self, path):
-        validate_attr(path)
         return self.eval(
-            f'render (lib.attrByPath {to_nix(path.split("."))} (throw "No such evaluated value") n.config)'
+            f'render (lib.attrByPath {to_nix(list(attr_parts(path)))} (throw "No such evaluated value") n.config)'
         )
 
     def get_optional(self, path):
-        validate_attr(path)
-        parts = to_nix(path.split("."))
+        parts = to_nix(list(attr_parts(path)))
         return self.eval(
             f"if lib.hasAttrByPath {parts} n.config then render (lib.getAttrFromPath {parts} n.config) else {{ __acenixAbsent = true; }}"
         )
 
     def options(self, query=""):
         if self._options is None:
-            self._options = self.eval("""let walk = prefix: tree:
+            paths = self.eval("""let walk = prefix: tree:
               lib.concatLists (lib.mapAttrsToList (key: value:
-                if lib.isOption value then [ (lib.concatStringsSep "." (prefix ++ [key])) ]
+                if lib.isOption value then [ (prefix ++ [key]) ]
                 else if builtins.isAttrs value then walk (prefix ++ [key]) value else []
               ) tree); in walk [] n.options""")
+            self._options = [attr_name(parts) for parts in paths]
         return sorted(
             path for path in self._options if query.casefold() in path.casefold()
         )
 
     def info(self, path):
-        validate_attr(path)
+        path = validate_attr(path)
         # Static options plus submodule child schemas: attrsOf uses <name> or
         # <name?> placeholders, which are metadata only, never emitted to source.
         body = f"""let
-          resolve = tree: parts:
-            if parts == [] then tree else
+          resolve = tree: parts: sources: readOnly:
+            if parts == [] then {{ option = tree; inherit sources readOnly; }} else
             if lib.isOption tree then resolve (tree.type.getSubOptions [])
-              (if builtins.elem tree.type.name ["attrsOf" "lazyAttrsOf"] then builtins.tail parts else parts) else
+              (if builtins.elem tree.type.name ["attrsOf" "lazyAttrsOf"] then builtins.tail parts else parts)
+              (sources ++ (map (d: toString d.file) (tree.definitionsWithLocations or [])))
+              (readOnly || (tree.readOnly or false)) else
             if builtins.hasAttr (builtins.head parts) tree then
-              resolve tree.${{builtins.head parts}} (builtins.tail parts)
-            else if builtins.hasAttr "<name>" tree then resolve tree."<name>" parts
-            else if builtins.hasAttr "<name?>" tree then resolve tree."<name?>" parts
+              resolve tree.${{builtins.head parts}} (builtins.tail parts) sources readOnly
+            else if builtins.hasAttr "<name>" tree then resolve tree."<name>" parts sources readOnly
+            else if builtins.hasAttr "<name?>" tree then resolve tree."<name?>" parts sources readOnly
             else throw "Unknown option or unsupported dynamic submodule path";
-          o = resolve n.options {to_nix(path.split("."))};
+          resolved = resolve n.options {to_nix(list(attr_parts(path)))} [] false;
+          o = resolved.option;
         in if !lib.isOption o then throw "Path names an option namespace, not an option" else {{
           name = {nix_string(path)};
           type = o.type.name; typeDescription = o.type.description;
-          readOnly = o.readOnly or false;
+          readOnly = resolved.readOnly || (o.readOnly or false);
           description = if builtins.isString (o.description or "") then o.description or "" else "See NixOS manual";
           declarations = map toString (o.declarations or []);
-          files = map (d: toString d.file) (o.definitionsWithLocations or []);
+          files = lib.unique ((map (d: toString d.file) (o.definitionsWithLocations or [])) ++ resolved.sources);
           priority = o.highestPrio or null;
           default = if o ? default then
             let value = builtins.tryEval (builtins.deepSeq (render o.default) (render o.default));
@@ -227,10 +229,10 @@ class NixOS:
         # source edits never introduce priorities; candidate evaluation below
         # checks actual merge semantics and the final effective value.
         definitions = " ".join(
-            f"{'.'.join(nix_string(p) for p in path.split('.'))} = lib.mkForce ({to_nix(value)});"
+            f"{attr_name(attr_parts(path), nix=True)} = lib.mkForce ({to_nix(value)});"
             for path, value in values.items()
         )
-        paths = to_nix([path.split(".") for path in values])
+        paths = to_nix([list(attr_parts(path)) for path in values])
         return self.eval(f"""let candidate = n.extendModules {{ modules = [ ({{ lib, ... }}: {{ {definitions} }}) ]; }};
           in map (path: render (lib.attrByPath path (throw "Option missing") candidate.config)) {paths}""")
 
@@ -327,8 +329,8 @@ class NixOS:
         return sorted(set(files))
 
     def package(self, attr):
-        validate_attr(attr)
-        return self.eval(f"""let p = lib.attrByPath {to_nix(attr.split("."))} (throw "Package does not exist in the selected nixpkgs") n.pkgs;
+        attr = validate_attr(attr)
+        return self.eval(f"""let p = lib.attrByPath {to_nix(list(attr_parts(attr)))} (throw "Package does not exist in the selected nixpkgs") n.pkgs;
           in if !lib.isDerivation p then throw "Attribute is not an installable package" else {{
             attribute = {nix_string(attr)}; name = p.name; storePath = p.outPath;
             description = p.meta.description or "";

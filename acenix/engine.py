@@ -158,6 +158,7 @@ class Plan:
     rules_hash: str = ""
     evaluated: bool = False
     derivation: str | None = None
+    activation: dict | None = None
 
     def public(self):
         sensitive = lambda path: bool(
@@ -192,6 +193,7 @@ class Plan:
             "rebuild_required": bool(changes),
             "validation": "candidate evaluated" if self.evaluated else "source plan",
             "derivation": self.derivation,
+            "activation": self.activation,
         }
 
 
@@ -214,13 +216,13 @@ def source_snapshot(root):
             path = Path(directory) / name
             if not path.is_file():
                 raise ConflictError(f"Non-regular configuration input: {path}")
-            data = path.read_bytes()
-            size += len(data)
-            if len(files) >= 10000 or size > 128 * 1024 * 1024:
+            info = path.stat()
+            if len(files) >= 10000 or size + info.st_size > 128 * 1024 * 1024:
                 raise ValidationError(
                     "Configuration root exceeds 10,000 files or 128 MiB. Choose a dedicated configuration directory."
                 )
-            info = path.stat()
+            data = path.read_bytes()
+            size += len(data)
             files[str(path.relative_to(root))] = {
                 "hash": digest(data),
                 "mode": info.st_mode & 0o777,
@@ -261,6 +263,21 @@ class Engine:
         def choose(path):
             files = backend.source_file(path)
             if len(files) > 1:
+                exact = []
+                for file in files:
+                    try:
+                        editor = Editor(file.read_text())
+                        if editor._binding(path) is not None:
+                            exact.append(file)
+                    except ConflictError:
+                        # A computed contributing module can affect the same
+                        # option. Do not silently disregard its definition.
+                        raise ConflictError(
+                            f"Cannot disambiguate {path} inside computed module {file}"
+                        )
+                if len(exact) == 1:
+                    return exact[0]
+            if len(files) > 1:
                 raise ConflictError(
                     f"{path} has multiple module definitions: {files}; resolve priorities natively."
                 )
@@ -296,18 +313,18 @@ class Engine:
             if current != serial:
                 file = choose(path)
                 edit(file, lambda editor, p=path, v=requested: editor.set(p, v))
-                if path.startswith(
-                    (
-                        "boot.",
-                        "networking.",
-                        "users.",
-                        "security.",
-                        "services.openssh.",
-                        "services.displayManager.",
-                        "services.xserver.",
-                    )
-                ):
-                    plan.high_impact.append(path)
+            if path.startswith(
+                (
+                    "boot.",
+                    "networking.",
+                    "users.",
+                    "security.",
+                    "services.openssh.",
+                    "services.displayManager.",
+                    "services.xserver.",
+                )
+            ):
+                plan.high_impact.append(path)
         installed = backend.get("environment.systemPackages") if packages else []
         installed_paths = {p.get("storePath") for p in installed if isinstance(p, dict)}
         additions, removals = [], {}

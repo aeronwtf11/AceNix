@@ -90,3 +90,42 @@ def test_nix_injection_escaped():
 def test_duplicate_json_attributes_are_rejected():
     with pytest.raises(ValidationError, match="Duplicate JSON"):
         parse('environment.sessionVariables:{"EDITOR":"vim","EDITOR":"nano"}')
+
+
+def test_quoted_attribute_paths_and_delimiters_roundtrip():
+    from acenix.rules import attr_parts, attr_name
+
+    key = 'services.nginx.virtualHosts."example.org:443".root'
+    document = update("", key, "/srv/www")
+    rule = parse(document)[0]
+    assert attr_parts(rule.key) == (
+        "services",
+        "nginx",
+        "virtualHosts",
+        "example.org:443",
+        "root",
+    )
+    assert rule.value == "/srv/www"
+    assert attr_name(attr_parts(key)) == key
+
+
+def test_quoted_alias_conflicts_are_detected():
+    with pytest.raises(ValidationError, match="Duplicate"):
+        parse('hostname:first\n"networking"."hostName":second')
+
+
+@pytest.mark.parametrize(
+    "path", ["a..b", "a.", ".a", "a.${1}", 'a."unterminated', "a;throw", 'a."x"tail']
+)
+def test_invalid_attribute_paths_refused(path):
+    from acenix.rules import attr_parts
+
+    with pytest.raises(ValidationError):
+        attr_parts(path)
+
+
+def test_numeric_limits_and_decimal_floats():
+    assert to_nix(1e-12) == "0.000000000001"
+    assert to_nix(1e20) == "100000000000000000000.0"
+    with pytest.raises(ValidationError):
+        to_nix(2**63)

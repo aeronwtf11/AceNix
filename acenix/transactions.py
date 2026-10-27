@@ -107,13 +107,6 @@ class Transactions:
             raise ConflictError(
                 "Rules or native sources changed since the saved preview; run preview again."
             )
-        if not plan.changes and mode != "build":
-            with self.candidate(plan) as target:
-                self.validate(plan, target)
-            return {
-                "result": "unchanged",
-                "message": "No native source changes are required.",
-            }
         if mode != "build":
             self._permission_check(plan)
             if not Path("/etc/NIXOS").exists():
@@ -133,6 +126,18 @@ class Transactions:
                     }
                 )
                 return {"result": "built", "system": system, "sources_changed": False}
+            # Matching source does not mean matching runtime or boot state:
+            # `test` followed by `boot` must still install the boot generation.
+            plan.activation = {
+                "mode": mode,
+                "system": system,
+                "running_system": str(Path("/run/current-system").resolve())
+                if Path("/run/current-system").exists()
+                else None,
+                "profile_system": str(Path("/nix/var/nix/profiles/system").resolve())
+                if Path("/nix/var/nix/profiles/system").exists()
+                else None,
+            }
             confirm(plan.public(), mode)
             self.unchanged(plan)
             if (
@@ -274,6 +279,14 @@ class Transactions:
             "root"
         ] != str(self.backend.target.root):
             raise ConflictError("Backup belongs to a different native target.")
+        current_state = self.store.read()
+        if current_state.get("last_backup") not in {
+            None,
+            identifier,
+        } and current_state != manifest.get("previous_state", {}):
+            raise ConflictError(
+                "A later transaction changed managed state. Recover the latest backup first; older recovery cannot discard newer ownership records."
+            )
         pending = []
         for name, hashes in manifest["files"].items():
             relative = Path(name)

@@ -46,6 +46,10 @@ def human(value):
         if value["high_impact"]:
             lines.append("HIGH IMPACT: " + ", ".join(value["high_impact"]))
         lines.append("Rebuild required: " + str(value["rebuild_required"]).lower())
+        if value.get("activation"):
+            lines.append(
+                "Activation: " + json.dumps(value["activation"], ensure_ascii=False)
+            )
         return "\n".join(lines)
     if isinstance(value, dict):
         return "\n".join(

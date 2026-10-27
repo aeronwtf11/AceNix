@@ -6,10 +6,9 @@ Unsupported expressions are readable but cannot be rewritten speculatively.
 """
 
 from dataclasses import dataclass
-import json
 import re
 from .errors import ConflictError, ValidationError
-from .rules import to_nix, validate_attr
+from .rules import to_nix, attr_parts, attr_name
 
 
 @dataclass(frozen=True)
@@ -17,6 +16,27 @@ class Token:
     text: str
     start: int
     end: int
+
+
+def literal_string(text):
+    """Decode a literal Nix string; return None for executable interpolation."""
+    if len(text) < 2 or not text.startswith('"') or not text.endswith('"'):
+        return None
+    result, index = [], 1
+    escapes = {"n": "\n", "r": "\r", "t": "\t", '"': '"', "\\": "\\", "$": "$"}
+    while index < len(text) - 1:
+        char = text[index]
+        if char == "\\":
+            index += 1
+            if index >= len(text) - 1 or text[index] not in escapes:
+                return None
+            result.append(escapes[text[index]])
+        elif char == "$" and text[index : index + 2] == "${":
+            return None
+        else:
+            result.append(char)
+        index += 1
+    return "".join(result)
 
 
 def tokenize(source):
@@ -149,11 +169,9 @@ class Editor:
     def _name(self, token):
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_'-]*", token.text):
             return token.text
-        if token.text.startswith('"') and "${" not in token.text:
-            try:
-                return json.loads(token.text)
-            except ValueError:
-                pass
+        decoded = literal_string(token.text)
+        if decoded is not None:
+            return decoded
         raise ConflictError("Dynamic attribute names cannot be safely edited.")
 
     def _set(self, opening, prefix):
@@ -216,7 +234,7 @@ class Editor:
             index += 1
 
     def _binding(self, path):
-        path = tuple(validate_attr(path).split("."))
+        path = attr_parts(path)
         matches = [binding for binding in self.bindings if binding.path == path]
         if len(matches) > 1:
             raise ConflictError(
@@ -233,7 +251,7 @@ class Editor:
             ):
                 return True
             if text.startswith('"'):
-                return not re.search(r"(?<!\\)\$\{", text)
+                return literal_string(text) is not None
             return False
         if tokens[first].text == "[" and self.pairs[first] == last:
             index = first + 1
@@ -253,12 +271,12 @@ class Editor:
             text = self.source[tokens[first].start : tokens[last].end]
             return (
                 bool(re.fullmatch(r'\(builtins\.toPath "(?:[^"\\]|\\.)*"\)', text))
-                and "${" not in text
+                and literal_string(tokens[first + 4].text) is not None
             )
         return False
 
     def set(self, path, value):
-        names = tuple(validate_attr(path).split("."))
+        names = attr_parts(path)
         binding = self._binding(path)
         expression = to_nix(value)
         if binding:
@@ -278,7 +296,7 @@ class Editor:
                 raise ConflictError(f"{path} is inside a computed attribute set")
         prefix = max((key for key in self.sets if names[: len(key)] == key), key=len)
         close = self.tokens[self.sets[prefix][1]].start
-        suffix = ".".join(names[len(prefix) :])
+        suffix = attr_name(names[len(prefix) :], nix=True)
         return (
             self.source[:close]
             + f"\n  {suffix} = {expression};\n"
@@ -294,7 +312,9 @@ class Editor:
                 )
             # pkgs is only valid when explicitly available in the module args.
             self._require_pkgs()
-            names = " ".join("pkgs." + validate_attr(name) for name in add)
+            names = " ".join(
+                "pkgs." + attr_name(attr_parts(name), nix=True) for name in add
+            )
             result = self.set("environment.systemPackages", [])
             created = Editor(result)._binding("environment.systemPackages")
             return result[: created.start] + f"[ {names} ]" + result[created.end :]
@@ -315,15 +335,15 @@ class Editor:
             if self.tokens[index].text in {"(", "{", "["}:
                 index = self.pairs[index] + 1
                 continue
-            parts = [self.tokens[index].text]
+            parts = [self._name(self.tokens[index])]
             index += 1
             while index + 1 < last and self.tokens[index].text == ".":
-                parts.append(self.tokens[index + 1].text)
+                parts.append(self._name(self.tokens[index + 1]))
                 index += 2
             name = (
-                ".".join(parts[1:])
+                attr_name(parts[1:])
                 if parts[0] == "pkgs"
-                else ".".join(parts)
+                else attr_name(parts)
                 if with_pkgs
                 else None
             )
@@ -344,7 +364,10 @@ class Editor:
                     position,
                     position,
                     " "
-                    + " ".join("pkgs." + validate_attr(name) for name in added)
+                    + " ".join(
+                        "pkgs." + attr_name(attr_parts(name), nix=True)
+                        for name in added
+                    )
                     + " ",
                 )
             )

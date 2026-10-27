@@ -199,3 +199,27 @@ def test_locked_flake_and_imported_source_editing(native):
     assert set(plan.changes) == {"configuration.nix", "services.nix"}
     result = Transactions(flake, store).preview(plan)
     assert result["validation"] == "candidate evaluated"
+
+
+def test_quoted_dynamic_option_in_imported_module(native):
+    backend, store = native
+    imported = backend.target.root / "services.nix"
+    imported.write_text(
+        '{ ... }: { services.nginx.virtualHosts."example.org".root = "/srv/old"; }'
+    )
+    path = 'services.nginx.virtualHosts."example.org".root'
+    assert backend.get(path) == "/srv/old"
+    plan = Engine(backend).plan(parse(path + ':"/srv/new"'), {})
+    assert set(plan.changes) == {"services.nix"}
+    assert (
+        Transactions(backend, store).preview(plan)["validation"]
+        == "candidate evaluated"
+    )
+
+
+def test_small_large_float_literals_are_real_nix_values(native):
+    from acenix.rules import to_nix
+
+    backend, _ = native
+    for number in [1e-12, 1.5e20, -0.0]:
+        assert backend.eval(to_nix(number)) == number

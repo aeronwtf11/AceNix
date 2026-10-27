@@ -268,7 +268,7 @@ def dispatch(args):
             if p.startswith("services.") and p.endswith(".enable")
         ]
         return backend.eval(
-            f'builtins.listToAttrs (map (path: {{ name = lib.concatStringsSep "." path; value = lib.attrByPath path null n.config; }}) {rules.to_nix([p.split(".") for p in paths])})'
+            f'builtins.listToAttrs (map (path: {{ name = lib.concatStringsSep "." path; value = lib.attrByPath path null n.config; }}) {rules.to_nix([list(rules.attr_parts(p)) for p in paths])})'
         )
     if command == "service":
         option = service_option(backend, args.name)

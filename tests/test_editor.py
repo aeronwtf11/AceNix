@@ -85,3 +85,27 @@ def test_interpolations_and_indented_strings_are_single_tokens():
 def test_inherited_attrset_not_literal():
     with pytest.raises(ConflictError):
         Editor("{x = { inherit y; };}").set("x", {})
+
+
+def test_quoted_native_attribute_edits_preserve_names():
+    source = '{ services.nginx.virtualHosts."example.org".root = "/old"; }'
+    result = Editor(source).set(
+        'services.nginx.virtualHosts."example.org".root', "/new"
+    )
+    assert result == source.replace("/old", "/new")
+    result = Editor(result).set('environment.etc."file:with.dots".text', "hello")
+    assert 'environment.etc."file:with.dots".text = "hello";' in result
+
+
+def test_even_backslashes_do_not_hide_executable_interpolation():
+    from acenix.editor import literal_string
+
+    expression = '"' + "\\" * 2 + '${dangerous}"'
+    assert literal_string(expression) is None
+    with pytest.raises(ConflictError):
+        Editor("{ x = " + expression + "; }").set("x", "new")
+
+
+def test_escaped_literal_interpolation_remains_editable():
+    source = '{ x = "\\${literal}"; }'
+    assert Editor(source).set("x", "new") == '{ x = "new"; }'

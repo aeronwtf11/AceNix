@@ -155,3 +155,30 @@ def test_permission_failure(transaction, monkeypatch):
     with pytest.raises(PermissionError):
         apply(t, p, rules)
     assert config.read_bytes() == p.changes["configuration.nix"][0]
+
+
+def test_boot_after_test_does_not_skip_activation_when_sources_match(transaction):
+    t, p, config, rules = transaction
+    calls = []
+    t.backend.activate = lambda system, mode: calls.append(mode)
+    apply(t, p, rules, "test")
+    matching = Plan(p.target, source_snapshot(config.parent), rules_hash=p.rules_hash)
+    t.validate = lambda plan, target: plan
+    apply(t, matching, rules, "boot")
+    assert calls == ["test", "boot"]
+
+
+def test_old_recovery_cannot_discard_newer_managed_state(transaction):
+    t, p, config, rules = transaction
+    first = apply(t, p, rules)
+    t.store.write(
+        "state.json",
+        {
+            "target": p.target,
+            "last_backup": "f" * 32,
+            "managed_packages": {"hello": "other.nix"},
+        },
+    )
+    with pytest.raises(ConflictError, match="later transaction"):
+        t.recover(first["backup"], lambda *args: None)
+    assert t.store.read()["managed_packages"] == {"hello": "other.nix"}
