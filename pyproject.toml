@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "acenix"
+version = "1.0.0"
+description = "Imperative commands. Declarative NixOS foundations."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{name = "AceNix contributors"}]
+dependencies = []
+
+[project.scripts]
+acenix = "acenix.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest==8.4.2"]
+
+[tool.setuptools.packages.find]
+include = ["acenix*", "core*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["nix: requires real NixOS evaluation tools"]
+

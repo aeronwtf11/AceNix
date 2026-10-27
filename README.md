@@ -12,14 +12,15 @@ It does not replace Nix, Nixpkgs or systemd.
 
 Version **1.0.0** includes native option and source management, declarative
 packages and services, profiles, transactional activation, recovery and native
-generation rollback. See [verification evidence and supported limits](https://github.com/aeronwtf11/AceNix/tree/acenix-v1.0.0/docs/IMPLEMENTATION.md)
-and the [release checklist](https://github.com/aeronwtf11/AceNix/tree/acenix-v1.0.0/docs/RELEASING.md). Integration tests use disposable
+generation rollback. See [verification evidence and supported limits](docs/IMPLEMENTATION.md)
+and the [release checklist](docs/RELEASING.md). Integration tests use disposable
 NixOS systems.
 
 **[Download AceNix v1.0.0 ZIP](https://github.com/aeronwtf11/AceNix/archive/refs/heads/acenix-v1.0.0.zip)** · [Browse the release source](https://github.com/aeronwtf11/AceNix/tree/acenix-v1.0.0)
 
-The complete v1.0 source is on the `acenix-v1.0.0` branch. Use that branch
-for the installation commands below.
+The complete application, tests, Nix packaging and documentation are available
+on `main`. The `acenix-v1.0.0` branch provides the release used by the
+installation command below.
 
 ## Installation
 
@@ -295,7 +296,7 @@ and EFI/flake machines that build, activate, reboot, recover and roll back.
 `nix build .#checks.x86_64-linux.nixos-traditional` and the `nixos-flake` check
 run real boot tests (software emulation also works without KVM).
 Tests never activate the developer's host. See
-[architecture](https://github.com/aeronwtf11/AceNix/tree/acenix-v1.0.0/docs/ARCHITECTURE.md) and [release verification](https://github.com/aeronwtf11/AceNix/tree/acenix-v1.0.0/docs/RELEASING.md).
+[architecture](docs/ARCHITECTURE.md) and [release verification](docs/RELEASING.md).
 
 The root `main.py` remains a compatibility entry point; no arguments
 preview the adjacent config.sys. `core/main.py` is the understandable CLI entry
