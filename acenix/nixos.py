@@ -6,8 +6,13 @@ import os
 from pathlib import Path
 import subprocess
 import logging
+from urllib.parse import quote
 from .errors import ToolError, ValidationError
 from .rules import nix_string, to_nix, validate_attr
+
+
+def flake_ref(path):
+    return "path:" + quote(str(path.resolve()), safe="/")
 
 
 def run(argv, *, timeout=300):
@@ -41,6 +46,10 @@ class Target:
     module: Path | None = None
 
     def __post_init__(self):
+        if self.config is not None and self.flake is not None:
+            raise ValidationError(
+                "Choose a conventional configuration or a flake, not both."
+            )
         if self.flake:
             if not self.host:
                 raise ValidationError(
@@ -54,6 +63,15 @@ class Target:
                 )
         elif self.config is None:
             raise ValidationError("Choose --config or --flake with --host.")
+        elif not self.config.is_file():
+            raise ValidationError(f"Configuration not found: {self.config}")
+        if self.module and (
+            not self.module.is_file()
+            or not self.module.resolve().is_relative_to(self.root)
+        ):
+            raise ValidationError(
+                "The editing module must be an existing imported file inside the configuration root."
+            )
 
     @property
     def root(self):
@@ -76,7 +94,7 @@ class Target:
 
     def expression(self):
         if self.flake:
-            return f"(builtins.getFlake {nix_string('path:' + str(self.flake.resolve()))}).nixosConfigurations.${{{nix_string(self.host)}}}"
+            return f"(builtins.getFlake {nix_string(flake_ref(self.flake))}).nixosConfigurations.${{{nix_string(self.host)}}}"
         return f"(import <nixpkgs/nixos/lib/eval-config.nix> {{ modules = [ (builtins.toPath {nix_string(str(self.config.resolve()))}) ]; }})"
 
     def rebuild_args(self, mode):
@@ -84,7 +102,7 @@ class Target:
         if self.flake:
             args += [
                 "--flake",
-                f"path:{self.flake}#{self.host}",
+                f"{flake_ref(self.flake)}#{self.host}",
                 "--no-write-lock-file",
             ]
         else:
@@ -231,7 +249,7 @@ class NixOS:
                 "--no-link",
                 "--print-out-paths",
                 "--no-write-lock-file",
-                f"path:{target.flake}#nixosConfigurations.{target.host}.config.system.build.toplevel",
+                f"{flake_ref(target.flake)}#nixosConfigurations.{nix_string(target.host)}.config.system.build.toplevel",
             ]
         else:
             args = [
@@ -284,7 +302,7 @@ class NixOS:
                 # getFlake imports a store copy. Map only this exact flake's
                 # outPath; do not guess a module from its basename.
                 out = self.eval(
-                    f"(builtins.getFlake {nix_string('path:' + str(self.target.flake))}).outPath"
+                    f"(builtins.getFlake {nix_string(flake_ref(self.target.flake))}).outPath"
                 )
                 # Local/chroot stores report real on-disk locations in option
                 # metadata, while outPath remains a logical /nix/store path.
@@ -330,13 +348,15 @@ class NixOS:
     def update(self):
         if self.target.flake:
             return self.run(
-                ["nix", "flake", "update", "--flake", str(self.target.flake)],
+                ["nix", "flake", "update", "--flake", flake_ref(self.target.flake)],
                 timeout=1800,
             )
         return self.run(["nix-channel", "--update"], timeout=1800)
 
 
 def discover(config=None, flake=None, host=None, module=None):
+    if config and flake:
+        raise ValidationError("Pass --config or --flake, not both.")
     module = Path(module).absolute() if module else None
     if flake:
         return Target(flake=Path(flake).absolute(), host=host, module=module)
