@@ -23,54 +23,73 @@ for the installation commands below.
 
 ## Installation
 
-Python 3.11 or newer, Linux, and native Nix tooling are required. Activation and
-native generation rollback additionally require a running NixOS installation.
-There are no third-party Python runtime dependencies.
-
-Get the release source first:
+On NixOS, install AceNix once into your Nix user profile:
 
 ```sh
-git clone --branch acenix-v1.0.0 --single-branch https://github.com/aeronwtf11/AceNix.git
-cd AceNix
+nix --extra-experimental-features 'nix-command flakes' profile install \
+  https://codeload.github.com/aeronwtf11/AceNix/tar.gz/acenix-v1.0.0
 ```
 
-Alternatively, extract the ZIP linked above and open a terminal in its folder.
+Then use the normal command from any directory:
 
 ```sh
-python3 -m venv .venv
-.venv/bin/pip install .
-.venv/bin/acenix --help
+acenix --version
+acenix --help
+acenix install firefox
+acenix preview
 ```
 
-With flakes:
+The install adds `acenix` to your Nix profile's `bin` directory. If your current
+terminal does not see the command yet, open a new login terminal so Nix's profile
+PATH is loaded. You do not need to run a binary from a build-output directory.
+`install firefox` stages a declarative package request; review and apply it to
+change the NixOS system.
 
-```sh
-nix --extra-experimental-features 'nix-command flakes' build
-./result/bin/acenix --version
-nix --extra-experimental-features 'nix-command flakes' profile install .
-```
+System activation and native generation rollback require NixOS and administrator
+permissions. AceNix has no third-party Python runtime dependencies.
 
-Without flakes, copy/checkout the project and add it to configuration.nix:
+### System-wide NixOS installation
+
+For administration, install AceNix through your NixOS configuration so both your
+user and `sudo` can find the same `acenix` command. Download/extract the release
+or check out the `acenix-v1.0.0` branch, then add its package:
 
 ```nix
 environment.systemPackages = [ (pkgs.callPackage /path/to/AceNix/package.nix { }) ];
 ```
 
-Then perform your normal reviewed NixOS rebuild. An optional flake NixOS module
-exports `programs.acenix.enable`; import `acenix.nixosModules.default` first.
-Installation does not enable a daemon or modify system settings.
+Run your normal reviewed NixOS rebuild. You can then use `acenix` and
+`sudo -H acenix` from any directory. The first workflow below uses this
+system-wide installation and one administrator account throughout.
+
+An optional flake NixOS module exports `programs.acenix.enable`; import
+`acenix.nixosModules.default` first and set that option to `true`. Use the
+`acenix-v1.0.0` branch for the AceNix input. Installation does not enable a daemon
+or modify other system settings.
+
+### Python development installation
+
+For developing from a release checkout, Python 3.11 or newer and native Nix
+commands are required:
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+pip install .
+acenix --help
+```
 
 ## First workflow
 
 ```sh
-acenix doctor
-acenix setr hostname:ace-pc
-acenix setr network:true
-acenix enable ssh
-acenix install git vim
-acenix preview
-acenix apply --mode build
-acenix apply --mode switch
+sudo -H acenix doctor
+sudo -H acenix setr hostname:ace-pc
+sudo -H acenix setr network:true
+sudo -H acenix enable ssh
+sudo -H acenix install git vim
+sudo -H acenix preview
+sudo -H acenix apply --mode build
+sudo -H acenix apply --mode switch
 ```
 
 `set`, `setr`, `install`, `remove`, `enable` and `disable` stage rules. **They do
