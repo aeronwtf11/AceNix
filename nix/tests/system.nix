@@ -1,13 +1,13 @@
-{ pkgs, acenix, flakeMode ? false, efi ? false }:
+{ pkgs, acenix, flakeMode ? false, efi ? false, nixpkgsArchive ? null }:
 let
   inherit (pkgs) lib;
   source = acenix.src;
   nixpkgsPath = builtins.path { path = pkgs.path; name = "source"; };
-  # Use the exact metadata of the local path input used inside the guest,
+  # Use the exact metadata of the immutable tarball input used inside the guest,
   # including Nixpkgs' public nixosSystem wrapper and its version information.
   pinnedHash = (builtins.fromJSON (builtins.readFile ../../flake.lock)).nodes.nixpkgs.locked.narHash;
   flakePkgs = builtins.getFlake (builtins.unsafeDiscardStringContext
-    "path:${nixpkgsPath}?lastModified=0&narHash=${pinnedHash}");
+    "tarball+file://${nixpkgsArchive}?narHash=${pinnedHash}");
   bootSettings = if efi then ''
     boot.loader.grub.enable = false;
     boot.loader.systemd-boot.enable = true;
@@ -102,7 +102,7 @@ let
     in map (path: builtins.appendContext path (builtins.getContext arguments)) (lib.unique paths);
   localFlake = pkgs.writeText "flake.nix" ''
     {
-      inputs.nixpkgs.url = "path:${nixpkgsPath}";
+      inputs.nixpkgs.url = "tarball+file://${nixpkgsArchive}";
       inputs.acenix-source = { url = "path:${source}"; flake = false; };
       outputs = { nixpkgs, acenix-source, ... }: {
         nixosConfigurations.fixture = nixpkgs.lib.nixosSystem {
@@ -161,7 +161,8 @@ pkgs.testers.runNixOSTest {
       pkgs.grub2 pkgs.hello source nixpkgsPath pkgs.stdenvNoCC pkgs.makeInitrdNGTool
       pkgs.kmod pkgs.perl pkgs.nukeReferences pkgs.cpio pkgs.zstd pkgs.gzip
       localChannel
-    ] ++ pkgs.jq.all ++ generations ++ lib.concatMap directBuildInputs generations;
+    ] ++ lib.optional flakeMode nixpkgsArchive
+      ++ pkgs.jq.all ++ generations ++ lib.concatMap directBuildInputs generations;
     system.switch.enable = true;
     services.openssh.enable = false;
     networking.hostName = "acenix-before";
@@ -333,10 +334,20 @@ pkgs.testers.runNixOSTest {
           assert current() == running
         ''}
         ${lib.optionalString (!flakeMode) ''
-          machine.succeed("nix-channel --add file://${localChannel} acenix-test; nix-channel --update acenix-test")
+          channel_environment = "NIX_CONFIG='substituters = ' NIX_PATH=nixpkgs=${nixpkgsPath} "
+          # The minimal disk installer registers nixos without copying its
+          # channel profile. Initialize this disposable registry independently.
+          machine.succeed(
+              "install -m 600 /dev/null /root/.nix-channels",
+              channel_environment + "nix-channel --add file://${localChannel} acenix-unrelated",
+              channel_environment + "nix-channel --add file://${localChannel} acenix-test",
+              channel_environment + "nix-channel --update",
+              channel_environment + "nix-channel --add file:///tmp/acenix-unrelated-unavailable.tar.gz acenix-unrelated",
+          )
           cli = cli.replace("NIX_PATH=nixpkgs=${nixpkgsPath}", "NIX_PATH=nixpkgs=/root/.nix-defexpr/channels/acenix-test")
           result = command("update" + authorization)
           assert result['updates']['channels'] == ['acenix-test'], result
+          machine.succeed("test -e /root/.nix-defexpr/channels/acenix-unrelated")
           assert current() == running
         ''}
   '';

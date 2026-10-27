@@ -1,7 +1,11 @@
 {
   description = "AceNix development, package and checks";
   inputs.nixpkgs.url = "https://codeload.github.com/NixOS/nixpkgs/tar.gz/1f607aa79b6356ed45d3cd3c8079c196e79efa2c";
-  outputs = { self, nixpkgs }:
+  inputs.nixpkgs-archive = {
+    url = "file+https://codeload.github.com/NixOS/nixpkgs/tar.gz/1f607aa79b6356ed45d3cd3c8079c196e79efa2c";
+    flake = false;
+  };
+  outputs = { self, nixpkgs, nixpkgs-archive }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
       eachSystem = nixpkgs.lib.genAttrs systems;
@@ -15,7 +19,11 @@
           acenix = self.packages.${system}.default;
         in { package = acenix; } // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
           nixos-traditional = import ./nix/tests/system.nix { inherit pkgs acenix; };
-          nixos-flake = import ./nix/tests/system.nix { inherit pkgs acenix; flakeMode = true; efi = true; };
+          nixos-flake = import ./nix/tests/system.nix {
+            inherit pkgs acenix;
+            nixpkgsArchive = nixpkgs-archive.outPath;
+            flakeMode = true; efi = true;
+          };
         });
       devShells = eachSystem (system:
         let pkgs = import nixpkgs { inherit system; };
