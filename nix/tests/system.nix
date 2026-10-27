@@ -336,8 +336,11 @@ pkgs.testers.runNixOSTest {
         failure = machine.fail(cli + "apply --mode switch" + authorization + " --json 2>&1")
         assert json.loads(failure)['exit_code'] == 4, failure
         assert sources() == edited
-        machine.succeed("printf 'hostname:unprivileged\\n' > /tmp/acenix-public.sys; chmod 644 /tmp/acenix-public.sys")
-        unprivileged = "NIX_PATH=nixpkgs=${nixpkgsPath} acenix " + target + " --rules /tmp/acenix-public.sys --state /tmp/acenix-unprivileged apply --mode switch --yes --allow-high-impact --json"
+        machine.succeed(
+            "printf 'hostname:unprivileged\\n' > /tmp/acenix-public.sys; chmod 644 /tmp/acenix-public.sys",
+            "install -d -m 700 -o nobody /tmp/acenix-unprivileged-home",
+        )
+        unprivileged = "HOME=/tmp/acenix-unprivileged-home XDG_CACHE_HOME=/tmp/acenix-unprivileged-home/.cache NIX_PATH=nixpkgs=${nixpkgsPath} acenix " + target + " --rules /tmp/acenix-public.sys --state /tmp/acenix-unprivileged apply --mode switch --yes --allow-high-impact --json"
         failure = machine.fail("su nobody -s /bin/sh -c " + shlex.quote(unprivileged) + " 2>&1")
         assert json.loads(failure)['exit_code'] == 5, failure
         assert sources() == edited
