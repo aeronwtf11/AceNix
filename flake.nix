@@ -9,7 +9,14 @@
       packages = eachSystem (system:
         let pkgs = import nixpkgs { inherit system; };
         in { default = pkgs.callPackage ./package.nix { }; });
-      checks = eachSystem (system: { package = self.packages.${system}.default; });
+      checks = eachSystem (system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          acenix = self.packages.${system}.default;
+        in { package = acenix; } // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          nixos-traditional = import ./nix/tests/system.nix { inherit pkgs acenix; };
+          nixos-flake = import ./nix/tests/system.nix { inherit pkgs acenix; flakeMode = true; efi = true; };
+        });
       devShells = eachSystem (system:
         let pkgs = import nixpkgs { inherit system; };
         in { default = pkgs.mkShell {

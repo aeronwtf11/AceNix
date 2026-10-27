@@ -197,3 +197,43 @@ def test_corrupt_journal_cannot_redirect_recovery_write(transaction):
     with pytest.raises(ValidationError, match="identity"):
         t.recover(result["backup"], lambda *args: None)
     assert config.read_bytes() == p.changes["configuration.nix"][1]
+
+
+def test_post_activation_recording_failure_preserves_activated_source(transaction):
+    from acenix.errors import ActivationCompletedError
+
+    t, p, config, rules = transaction
+    actual_write = t.store.write
+
+    def failed(name, value):
+        if name == "state.json":
+            raise OSError("interrupted state write")
+        return actual_write(name, value)
+
+    t.store.write = failed
+    with pytest.raises(ActivationCompletedError, match="activation completed"):
+        apply(t, p, rules)
+    assert config.read_bytes() == p.changes["configuration.nix"][1]
+    assert t.backups()[0]["status"] == "completed"
+
+
+def test_external_edit_during_commit_prevents_activation(transaction):
+    t, p, config, rules = transaction
+    unrelated = config.parent / "other.nix"
+    unrelated.write_text("{}")
+    p.snapshot = source_snapshot(config.parent)
+    actual_manifest = t._manifest
+
+    def concurrent(manifest):
+        actual_manifest(manifest)
+        if manifest["committed"]:
+            unrelated.write_text("# external edit\n{}")
+
+    t._manifest = concurrent
+    calls = []
+    t.backend.activate = lambda *args: calls.append(args)
+    with pytest.raises(ToolError, match="activation was not started"):
+        apply(t, p, rules)
+    assert not calls
+    assert config.read_bytes() == p.changes["configuration.nix"][0]
+    assert "external edit" in unrelated.read_text()

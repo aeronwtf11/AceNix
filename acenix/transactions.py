@@ -14,6 +14,7 @@ from .errors import (
     PermissionError,
     ToolError,
     ValidationError,
+    ActivationCompletedError,
 )
 from .nixos import NixOS
 from .storage import atomic_write, digest, now, safe_path
@@ -22,6 +23,10 @@ from .storage import atomic_write, digest, now, safe_path
 class Transactions:
     def __init__(self, backend, store):
         self.backend, self.store = backend, store
+        if store.root.resolve().is_relative_to(backend.target.root):
+            raise ValidationError(
+                "Choose a state directory outside the native configuration tree, so journals cannot modify their own source snapshot."
+            )
 
     def unchanged(self, plan):
         if source_snapshot(self.backend.target.root) != plan.snapshot:
@@ -116,6 +121,8 @@ class Transactions:
             )
         if mode != "build":
             self._permission_check(plan)
+            if hasattr(self.backend, "activation_preflight"):
+                self.backend.activation_preflight()
             if not Path("/etc/NIXOS").exists():
                 raise ToolError(
                     "test/boot/switch activation requires NixOS; use --mode build for a candidate build."
@@ -168,6 +175,7 @@ class Transactions:
             backup = self._backup(plan, system, mode)
             committed = []
             activated = False
+            activation_started = False
             try:
                 for name, (before, after) in plan.changes.items():
                     atomic_write(
@@ -176,6 +184,16 @@ class Transactions:
                     committed.append(name)
                     backup["committed"] = committed[:]
                     self._manifest(backup)
+                expected_sources = {
+                    name: dict(info) for name, info in plan.snapshot.items()
+                }
+                for name, (_, after) in plan.changes.items():
+                    expected_sources[name]["hash"] = digest(after)
+                if source_snapshot(self.backend.target.root) != expected_sources:
+                    raise ConflictError(
+                        "Native files changed during source commit; activation was not started."
+                    )
+                activation_started = True
                 self.backend.activate(system, mode)
                 activated = True
                 backup["status"] = "completed"
@@ -211,7 +229,7 @@ class Transactions:
                 if activated:
                     # A state/journal failure after activation must not be
                     # described as a failed activation or automatic rollback.
-                    raise ToolError(
+                    raise ActivationCompletedError(
                         f"Native activation completed, but recording state failed. Preserve backup {backup['id']} and run doctor: {error}"
                     ) from error
                 failures = []
@@ -229,21 +247,32 @@ class Transactions:
                     "recovery-required" if failures else "sources-restored"
                 )
                 backup["error"] = str(error)
-                self._manifest(backup)
-                self.store.history(
-                    {
-                        "operation": "apply",
-                        "result": backup["status"],
-                        "backup": backup["id"],
-                    }
-                )
+                journal_error = None
+                try:
+                    self._manifest(backup)
+                    self.store.history(
+                        {
+                            "operation": "apply",
+                            "result": backup["status"],
+                            "backup": backup["id"],
+                        }
+                    )
+                except (OSError, AceNixError) as recording_error:
+                    journal_error = str(recording_error)
                 message = f"Apply failed. Backup: {backup['id']}. "
                 message += (
                     "Source restoration failed: " + "; ".join(failures)
                     if failures
                     else "Source files were restored."
                 )
-                message += " Native activation may have partially changed runtime/profile state; inspect generations and use explicit rollback if needed."
+                if activation_started:
+                    message += " Native activation may have partially changed runtime/profile state; inspect generations and use explicit rollback if needed."
+                else:
+                    message += " Native activation was not started."
+                if journal_error:
+                    message += (
+                        " Updating the recovery journal also failed: " + journal_error
+                    )
                 raise ToolError(message + "\n" + str(error)) from error
 
     def _backup(self, plan, system, mode):
@@ -280,7 +309,7 @@ class Transactions:
         result = []
         for path in sorted((self.store.root / "backups").glob("*/manifest.json")):
             result.append(self._read_manifest(path))
-        return result
+        return sorted(result, key=lambda row: row["time"])
 
     @staticmethod
     def _read_manifest(path):
@@ -295,7 +324,7 @@ class Transactions:
             or data.get("id") != valid_id
         ):
             raise ValidationError(f"Backup journal identity mismatch: {path}")
-        required_strings = ["target", "root", "status", "system", "mode"]
+        required_strings = ["target", "root", "status", "system", "mode", "time"]
         if (
             any(not isinstance(data.get(key), str) for key in required_strings)
             or not isinstance(data.get("files"), dict)

@@ -10,7 +10,13 @@ import sys
 from . import __version__, rules
 from .doctor import diagnose
 from .engine import Engine, mapped, service_option
-from .errors import AceNixError, Cancelled, ValidationError, ToolError
+from .errors import (
+    AceNixError,
+    Cancelled,
+    ValidationError,
+    ToolError,
+    ActivationCompletedError,
+)
 from .fastfetch import Fastfetch
 from .generations import generations, rollback
 from .nixos import NixOS, discover
@@ -389,6 +395,10 @@ def dispatch(args):
                 result = transactions.apply(
                     plan, mode=args.mode, confirm=authorization, rules_path=args.rules
                 )
+            except ActivationCompletedError:
+                # Reverting rules after real activation would misrepresent the
+                # active profile merely because its journal could not be saved.
+                raise
             except BaseException:
                 if previous is None:
                     if digest(args.rules.read_bytes()) == digest(text.encode()):

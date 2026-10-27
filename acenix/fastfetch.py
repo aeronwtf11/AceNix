@@ -105,14 +105,18 @@ class Fastfetch:
 
     def status(self):
         state = self.store.read("fastfetch.json")
+        current = digest(self.path.read_bytes() if self.path.exists() else b"")
+        enabled = (
+            bool(state)
+            and state.get("phase") == "enabled"
+            and current == state.get("written")
+        )
         return {
-            "enabled": bool(state),
+            "enabled": enabled,
             "configuration": str(self.path),
+            "recovery_pending": bool(state) and not enabled,
             "externally_modified": bool(state)
-            and (
-                not self.path.exists()
-                or digest(self.path.read_bytes()) != state["written"]
-            ),
+            and current not in {state.get("written"), state.get("original")},
         }
 
     def enable(self, logo):
@@ -120,6 +124,10 @@ class Fastfetch:
             if self.status()["externally_modified"]:
                 raise ConflictError(
                     "Fastfetch configuration changed externally; disable/reconcile before enabling again."
+                )
+            if not self.status()["enabled"]:
+                raise ConflictError(
+                    "An incomplete Fastfetch operation needs recovery; run setr:fastfetch disable before enabling again."
                 )
             return {"result": "already-enabled"}
         if logo is None or not Path(logo).is_file():
@@ -175,19 +183,22 @@ class Fastfetch:
             raise ConflictError(
                 "Fastfetch configuration has external edits; refusing to overwrite them. Original backup is retained."
             )
+        original = None
         if state["existed"]:
             original = (self.store.root / "fastfetch-original").read_bytes()
             if digest(original) != state["original"]:
                 raise ConflictError("Fastfetch backup checksum mismatch")
-            atomic_write(self.path, original, expected=digest(current))
-        elif self.path.exists():
-            safe_path(self.path).unlink()
         logo = self.directory / "acenix-logo.txt"
         if logo.exists():
             if digest(logo.read_bytes()) != state["logo"]:
                 raise ConflictError(
                     "Installed logo was modified; leaving it and its recovery journal intact."
                 )
+        if original is not None:
+            atomic_write(self.path, original, expected=digest(current))
+        elif self.path.exists():
+            safe_path(self.path).unlink()
+        if logo.exists():
             safe_path(logo).unlink()
         self.store.write("fastfetch.json", {})
         return {"result": "disabled", "original_configuration_restored": True}

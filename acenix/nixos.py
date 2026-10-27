@@ -8,7 +8,7 @@ import subprocess
 import logging
 import re
 from urllib.parse import quote
-from .errors import ToolError, ValidationError
+from .errors import ToolError, ValidationError, PermissionError
 from .rules import nix_string, to_nix, validate_attr, attr_parts, attr_name
 
 
@@ -271,13 +271,20 @@ class NixOS:
             )
         return output[0]
 
-    def activate(self, system, mode):
-        if mode not in {"test", "boot", "switch"}:
-            raise ValidationError("Activation mode must be test, boot or switch.")
+    def activation_preflight(self):
         if not Path("/etc/NIXOS").exists():
             raise ToolError(
                 "System activation requires a running NixOS machine. Build/evaluation alone does not validate activation."
             )
+        if os.geteuid() != 0:
+            raise PermissionError(
+                "Native system activation requires explicitly running AceNix as root; privileges are never escalated automatically."
+            )
+
+    def activate(self, system, mode):
+        if mode not in {"test", "boot", "switch"}:
+            raise ValidationError("Activation mode must be test, boot or switch.")
+        self.activation_preflight()
         binary = Path(system) / "bin/switch-to-configuration"
         if not system.startswith("/nix/store/") or not binary.is_file():
             raise ToolError(
@@ -383,7 +390,15 @@ class NixOS:
     def update(self):
         if self.target.flake:
             return self.run(
-                ["nix", "flake", "update", "--flake", flake_ref(self.target.flake)],
+                [
+                    "nix",
+                    "--extra-experimental-features",
+                    "nix-command flakes",
+                    "flake",
+                    "update",
+                    "--flake",
+                    flake_ref(self.target.flake),
+                ],
                 timeout=1800,
             )
         return self.run(["nix-channel", "--update"], timeout=1800)

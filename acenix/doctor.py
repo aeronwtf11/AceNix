@@ -71,10 +71,17 @@ def diagnose(args, store):
     record("source permissions", permissions)
     record("private state directory", store.inspect)
     record("managed state", store.read)
-    record(
-        "pending rule types and source conflicts",
-        lambda: Engine(backend).plan(load(args.rules), store.read()).public(),
-    )
+
+    def pending():
+        plan = Engine(backend).plan(load(args.rules), store.read())
+        return {
+            "files": list(plan.changes),
+            "high_impact": plan.high_impact,
+            "packages": plan.packages,
+            "conflicts": [],
+        }
+
+    record("pending rule types and source conflicts", pending)
     record(
         "native store connection",
         lambda: backend.run(
@@ -100,6 +107,12 @@ def diagnose(args, store):
             raise ConflictError(
                 f"Interrupted transactions require inspection/recovery: {unfinished}"
             )
+        if manifests and manifests[-1]["status"] == "completed":
+            latest = manifests[-1]
+            if store.read().get("last_backup") != latest["id"]:
+                raise ConflictError(
+                    f"Activation completed for backup {latest['id']}, but managed state was not recorded. Inspect this journal before another apply."
+                )
         return {"count": len(manifests), "location": str(store.root / "backups")}
 
     record("backups and recovery", backups)

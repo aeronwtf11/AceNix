@@ -13,6 +13,10 @@ class ToolError(AceNixError):
     exit_code = 3
 
 
+class ActivationCompletedError(ToolError):
+    """Native activation succeeded, but subsequent bookkeeping failed."""
+
+
 class ConflictError(AceNixError):
     exit_code = 4
 
