@@ -3,6 +3,10 @@ let
   inherit (pkgs) lib;
   source = acenix.src;
   nixpkgsPath = builtins.path { path = pkgs.path; name = "source"; };
+  # Use the exact metadata of the local path input used inside the guest,
+  # including Nixpkgs' public nixosSystem wrapper and its version information.
+  pinnedHash = (builtins.fromJSON (builtins.readFile ../../flake.lock)).nodes.nixpkgs.locked.narHash;
+  flakePkgs = builtins.getFlake "path:${nixpkgsPath}?lastModified=0&narHash=${pinnedHash}";
   bootSettings = if efi then ''
     boot.loader.grub.enable = false;
     boot.loader.systemd-boot.enable = true;
@@ -38,7 +42,8 @@ let
     }
   '';
   template = ''
-    { lib, pkgs, modulesPath, ... }: {
+    { lib, pkgs, modulesPath, acenixSource, ... }: {
+      _module.args.acenixSource = ${source};
       imports = [
         @HARDWARE@
         @SERVICES@
@@ -59,7 +64,7 @@ let
         connect-timeout = 1;
         max-jobs = 2;
       };
-      environment.systemPackages = [ (pkgs.callPackage ${source}/package.nix { }) pkgs.vim @HELLO@ ];
+      environment.systemPackages = [ (pkgs.callPackage (acenixSource + "/package.nix") { }) pkgs.vim @HELLO@ ];
     }
   '';
   render = hardwarePath: servicePath: builderPath: hostname: hello:
@@ -72,12 +77,12 @@ let
     let
       module = builtins.toFile "configuration.nix"
         (render (toString hardware) (toString (builtins.toFile "services.nix" (serviceText ssh))) (toString builderOption) hostname hello);
-    in (import (nixpkgsPath + "/nixos/lib/eval-config.nix") {
+      arguments = {
       system = pkgs.stdenv.hostPlatform.system;
-      # nixpkgs.lib.nixosSystem injects its source into flake systems. Include
-      # that same native module when prebuilding their offline input closures.
-      modules = [ module ] ++ lib.optional flakeMode { nixpkgs.flake.source = nixpkgsPath; };
-    }).config.system.build.toplevel;
+      modules = [ module ];
+      };
+    in (if flakeMode then flakePkgs.lib.nixosSystem arguments
+        else import (nixpkgsPath + "/nixos/lib/eval-config.nix") arguments).config.system.build.toplevel;
   generations = [
     (generation "acenix-before" false false)
     (generation "acenix-a" true true)
@@ -97,9 +102,11 @@ let
   localFlake = pkgs.writeText "flake.nix" ''
     {
       inputs.nixpkgs.url = "path:${nixpkgsPath}";
-      outputs = { nixpkgs, ... }: {
+      inputs.acenix-source = { url = "path:${source}"; flake = false; };
+      outputs = { nixpkgs, acenix-source, ... }: {
         nixosConfigurations.fixture = nixpkgs.lib.nixosSystem {
           system = "${pkgs.stdenv.hostPlatform.system}";
+          specialArgs.acenixSource = acenix-source.outPath;
           modules = [ ./configuration.nix ];
         };
       };

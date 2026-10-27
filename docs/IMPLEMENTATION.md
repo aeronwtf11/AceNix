@@ -17,9 +17,10 @@ the real VM acceptance runs described in [RELEASING.md](RELEASING.md).
 
 ## Verified development checks
 
-- The enabled full run passes all 163 tests without skips: 138 unit/contract
-  tests and 25 actual native evaluation cases, including custom declared options,
-  paths, priority conflicts and assertions.
+- The enabled full run passes all 164 tests without skips: 138 unit/contract
+  tests and 26 actual native evaluation cases, including custom declared options,
+  paths, priority conflicts, assertions and configured/runtime hostname status.
+  Two additional real package-alias regression cases now pass as well.
 - The Nix package builds successfully and runs the unit suite during packaging.
 - Python 3.11, 3.12 and 3.13 each pass all 138 unit tests, lint/format checks,
   wheel/sdist builds and clean wheel installation in disposable containers.
