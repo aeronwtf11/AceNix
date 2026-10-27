@@ -6,7 +6,8 @@ let
   # Use the exact metadata of the local path input used inside the guest,
   # including Nixpkgs' public nixosSystem wrapper and its version information.
   pinnedHash = (builtins.fromJSON (builtins.readFile ../../flake.lock)).nodes.nixpkgs.locked.narHash;
-  flakePkgs = builtins.getFlake "path:${nixpkgsPath}?lastModified=0&narHash=${pinnedHash}";
+  flakePkgs = builtins.getFlake (builtins.unsafeDiscardStringContext
+    "path:${nixpkgsPath}?lastModified=0&narHash=${pinnedHash}");
   bootSettings = if efi then ''
     boot.loader.grub.enable = false;
     boot.loader.systemd-boot.enable = true;
@@ -184,7 +185,7 @@ pkgs.testers.runNixOSTest {
     import json
     import shlex
 
-    machine.start()
+    machine.start(allow_reboot=True)
     machine.wait_for_unit("multi-user.target")
     machine.succeed("udevadm settle")
     print(machine.succeed("df -h /", "df -i /"))
