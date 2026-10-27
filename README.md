@@ -16,47 +16,81 @@ generation rollback. See [verification evidence and supported limits](docs/IMPLE
 and the [release checklist](docs/RELEASING.md). Integration tests use disposable
 NixOS systems.
 
+**[Download AceNix v1.0.0 ZIP](https://github.com/aeronwtf11/AceNix/archive/refs/heads/acenix-v1.0.0.zip)** · [Browse the release source](https://github.com/aeronwtf11/AceNix/tree/acenix-v1.0.0)
+
+The complete application, tests, Nix packaging and documentation are available
+on `main`. The `acenix-v1.0.0` branch provides the release used by the
+installation command below.
+
 ## Installation
 
-Python 3.11 or newer, Linux, and native Nix tooling are required. Activation and
-native generation rollback additionally require a running NixOS installation.
-There are no third-party Python runtime dependencies.
+On NixOS, install AceNix once into your Nix user profile:
 
 ```sh
-python3 -m venv .venv
-.venv/bin/pip install .
-.venv/bin/acenix --help
+nix --extra-experimental-features 'nix-command flakes' profile install \
+  https://codeload.github.com/aeronwtf11/AceNix/tar.gz/acenix-v1.0.0
 ```
 
-With flakes:
+Then use the normal command from any directory:
 
 ```sh
-nix build
-./result/bin/acenix --version
-nix profile install .
+acenix --version
+acenix --help
+acenix install firefox
+acenix preview
 ```
 
-Without flakes, copy/checkout the project and add it to configuration.nix:
+The install adds `acenix` to your Nix profile's `bin` directory. If your current
+terminal does not see the command yet, open a new login terminal so Nix's profile
+PATH is loaded. You do not need to run a binary from a build-output directory.
+`install firefox` stages a declarative package request; review and apply it to
+change the NixOS system.
+
+System activation and native generation rollback require NixOS and administrator
+permissions. AceNix has no third-party Python runtime dependencies.
+
+### System-wide NixOS installation
+
+For administration, install AceNix through your NixOS configuration so both your
+user and `sudo` can find the same `acenix` command. Download/extract the release
+or check out the `acenix-v1.0.0` branch, then add its package:
 
 ```nix
 environment.systemPackages = [ (pkgs.callPackage /path/to/AceNix/package.nix { }) ];
 ```
 
-Then perform your normal reviewed NixOS rebuild. An optional flake NixOS module
-exports `programs.acenix.enable`; import `acenix.nixosModules.default` first.
-Installation does not enable a daemon or modify system settings.
+Run your normal reviewed NixOS rebuild. You can then use `acenix` and
+`sudo -H acenix` from any directory. The first workflow below uses this
+system-wide installation and one administrator account throughout.
+
+An optional flake NixOS module exports `programs.acenix.enable`; import
+`acenix.nixosModules.default` first and set that option to `true`. Use the
+`acenix-v1.0.0` branch for the AceNix input. Installation does not enable a daemon
+or modify other system settings.
+
+### Python development installation
+
+For developing from a release checkout, Python 3.11 or newer and native Nix
+commands are required:
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+pip install .
+acenix --help
+```
 
 ## First workflow
 
 ```sh
-acenix doctor
-acenix setr hostname:ace-pc
-acenix setr network:true
-acenix enable ssh
-acenix install git vim
-acenix preview
-acenix apply --mode build
-acenix apply --mode switch
+sudo -H acenix doctor
+sudo -H acenix setr hostname:ace-pc
+sudo -H acenix setr network:true
+sudo -H acenix enable ssh
+sudo -H acenix install git vim
+sudo -H acenix preview
+sudo -H acenix apply --mode build
+sudo -H acenix apply --mode switch
 ```
 
 `set`, `setr`, `install`, `remove`, `enable` and `disable` stage rules. **They do
@@ -264,7 +298,7 @@ run real boot tests (software emulation also works without KVM).
 Tests never activate the developer's host. See
 [architecture](docs/ARCHITECTURE.md) and [release verification](docs/RELEASING.md).
 
-Your original root `main.py` remains a compatibility entry point; no arguments
+The root `main.py` remains a compatibility entry point; no arguments
 preview the adjacent config.sys. `core/main.py` is the understandable CLI entry
 point, retaining `# EXTRAS`. The parsing logic lives in `acenix/rules.py`.
 Exactly three optional learning exercises are marked `TODO(USER)` in
