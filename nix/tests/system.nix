@@ -81,6 +81,16 @@ let
     (generation "acenix-b" true false)
     (generation "acenix-c" true false)
   ];
+  # A system copies some build inputs (activation/init scripts), so the runtime
+  # closure alone is insufficient for an offline rebuild. Retain the direct
+  # output paths in its derivation arguments, including their Nix dependency
+  # contexts. This avoids importing the entire compiler/bootstrap source graph.
+  directBuildInputs = system:
+    let
+      arguments = builtins.toJSON system.drvAttrs;
+      paths = lib.concatMap (part: if builtins.isList part then part else [ ])
+        (builtins.split "(/nix/store/[a-z0-9]{32}-[a-zA-Z0-9+._?=-]+)" arguments);
+    in map (path: builtins.appendContext path (builtins.getContext arguments)) (lib.unique paths);
   localFlake = pkgs.writeText "flake.nix" ''
     {
       inputs.nixpkgs.url = "path:${pkgs.path}";
@@ -132,10 +142,8 @@ pkgs.testers.runNixOSTest {
     system.extraDependencies = [
       pkgs.grub2 pkgs.hello source nixpkgsPath pkgs.stdenvNoCC pkgs.makeInitrdNGTool
       pkgs.kmod pkgs.perl pkgs.nukeReferences pkgs.cpio pkgs.zstd pkgs.gzip
-      # Copied activation scripts are not in a system's runtime closure. Their
-      # native writeShellApplication builders need these tools for a new build.
-      pkgs.python3Minimal pkgs.makeWrapper pkgs.gnused localChannel
-    ] ++ pkgs.jq.all ++ generations;
+      localChannel
+    ] ++ pkgs.jq.all ++ generations ++ lib.concatMap directBuildInputs generations;
     system.switch.enable = true;
     services.openssh.enable = false;
     networking.hostName = "acenix-before";
@@ -172,7 +180,7 @@ pkgs.testers.runNixOSTest {
     ''}
 
     target = "${if flakeMode then "--flake /etc/nixos --host fixture --module /etc/nixos/configuration.nix" else "--config /etc/nixos/configuration.nix"}"
-    cli = "NIX_PATH=nixpkgs=${nixpkgsPath} acenix " + target + " --rules /root/acenix.sys --state /root/acenix-state "
+    cli = "NIX_CONFIG='substituters = ' NIX_PATH=nixpkgs=${nixpkgsPath} acenix " + target + " --rules /root/acenix.sys --state /root/acenix-state "
     authorization = " --yes --allow-high-impact"
 
     def command(arguments):
@@ -222,6 +230,8 @@ pkgs.testers.runNixOSTest {
         result = command("apply --mode test" + authorization)
         assert result["result"] == "activated", result
         machine.wait_for_unit("sshd.service")
+        status = command('service status ssh')
+        assert status['declarative_enabled'] is True and status['runtime']['ActiveState'] == 'active', status
         machine.succeed("hello | grep 'Hello, world!'")
         assert machine.succeed("hostname").strip() == "acenix-a"
         assert profile() == initial_profile
@@ -293,6 +303,7 @@ pkgs.testers.runNixOSTest {
         assert result['result'] == 'activated', result
         assert machine.succeed('hostname').strip() == 'acenix-c'
         assert command('status')['managed_state']['active_profile'] == 'development'
+        assert command('doctor')['healthy'] is True
         running = current()
         ${lib.optionalString flakeMode ''
           result = command("update" + authorization)

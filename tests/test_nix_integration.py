@@ -245,3 +245,51 @@ def test_custom_declared_option_and_expanded_imported_module(native):
         Transactions(backend, store).preview(plan)["validation"]
         == "candidate evaluated"
     )
+
+
+def test_native_path_value(native):
+    from acenix.rules import NixPath
+
+    backend, store = native
+    source = backend.target.root / "example.txt"
+    source.write_text("Native path data, not executable Nix.")
+    rules = parse("environment.etc.acenix.source:path:" + str(source))
+    assert isinstance(rules[0].value, NixPath)
+    plan = Engine(backend).plan(rules, {})
+    assert (
+        Transactions(backend, store).preview(plan)["validation"]
+        == "candidate evaluated"
+    )
+
+
+@pytest.mark.parametrize("priority", [False, True])
+def test_actual_competing_or_priority_definitions_are_refused(native, priority):
+    backend, _ = native
+    module = backend.target.root / "services.nix"
+    if priority:
+        module.write_text("{lib,...}: {services.openssh.enable = lib.mkForce false;}")
+    else:
+        config = backend.target.config
+        config.write_text(
+            config.read_text().replace(
+                'networking.hostName = "before";',
+                'networking.hostName = "before"; services.openssh.enable = false;',
+            )
+        )
+    expected = ToolError if priority else ConflictError
+    with pytest.raises(expected):
+        Engine(backend).plan(parse("services.openssh.enable:true"), {})
+
+
+def test_real_module_assertion_blocks_candidate(native):
+    backend, store = native
+    module = backend.target.root / "services.nix"
+    module.write_text("""{...}: {
+      assertions = [{ assertion = false; message = "ACENIX_EXPECTED_ASSERTION"; }];
+      services.openssh.enable = false;
+    }""")
+    original = backend.target.config.read_bytes()
+    plan = Engine(backend).plan(parse("hostname:must-not-commit"), {})
+    with pytest.raises(ToolError, match="ACENIX_EXPECTED_ASSERTION"):
+        Transactions(backend, store).preview(plan)
+    assert backend.target.config.read_bytes() == original
