@@ -133,6 +133,9 @@ pkgs.testers.runNixOSTest {
       };
     }) ];
     environment.systemPackages = [ acenix pkgs.vim pkgs.nixos-install-tools ];
+    boot.loader.grub.enable = lib.mkForce (!efi);
+    boot.loader.systemd-boot.enable = lib.mkForce efi;
+    boot.loader.efi.canTouchEfiVariables = efi;
     documentation.enable = lib.mkForce false;
     documentation.nixos.enable = lib.mkForce false;
     hardware.firmware = lib.mkForce [ ];
