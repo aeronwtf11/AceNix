@@ -166,9 +166,14 @@ class Plan:
             re.search("password|secret|token|privateKey", path, re.I)
         )
         values = [
-            {**row, "current": "<redacted>", "requested": "<redacted>"}
+            {
+                **row,
+                "changed": row["current"] != row["requested"],
+                "current": "<redacted>",
+                "requested": "<redacted>",
+            }
             if sensitive(row["option"])
-            else row
+            else {**row, "changed": row["current"] != row["requested"]}
             for row in self.values
         ]
         changes = []
@@ -195,6 +200,22 @@ class Plan:
             "validation": "candidate evaluated" if self.evaluated else "source plan",
             "derivation": self.derivation,
             "activation": self.activation,
+            "change_count": sum(
+                row["current"] != row["requested"] for row in self.values
+            )
+            + len(self.packages["add"])
+            + len(self.packages["remove"]),
+            "unchanged_count": sum(
+                row["current"] == row["requested"] for row in self.values
+            )
+            + len(self.packages["already_present"]),
+            "reboot_may_be_required": any(
+                row["current"] != row["requested"]
+                and row["option"].startswith(
+                    ("boot.", "hardware.", "networking.hostName")
+                )
+                for row in self.values
+            ),
         }
 
 
@@ -203,7 +224,13 @@ def source_snapshot(root):
     import os
 
     files, size = {}, 0
-    for directory, folders, names in os.walk(root, followlinks=False):
+
+    def scan_error(error):
+        raise error
+
+    for directory, folders, names in os.walk(
+        root, followlinks=False, onerror=scan_error
+    ):
         folders[:] = [
             name for name in folders if name not in {".git", "__pycache__", ".venv"}
         ]
@@ -222,7 +249,27 @@ def source_snapshot(root):
                 raise ValidationError(
                     "Configuration root exceeds 10,000 files or 128 MiB. Choose a dedicated configuration directory."
                 )
-            data = path.read_bytes()
+            try:
+                data = path.read_bytes()
+            except PermissionError:
+                # Root-owned editor backups must not prevent a read-only
+                # preview. Keep their identity in the conflict snapshot; omit
+                # them from the private candidate. A real import of such a
+                # file still fails Nix evaluation rather than being invented.
+                files[str(path.relative_to(root))] = {
+                    "hash": None,
+                    "mode": info.st_mode & 0o777,
+                    "uid": info.st_uid,
+                    "gid": info.st_gid,
+                    "unreadable": {
+                        "size": info.st_size,
+                        "mtime_ns": info.st_mtime_ns,
+                        "ctime_ns": info.st_ctime_ns,
+                        "inode": info.st_ino,
+                    },
+                }
+                size += info.st_size
+                continue
             size += len(data)
             files[str(path.relative_to(root))] = {
                 "hash": digest(data),
@@ -245,6 +292,13 @@ class Engine:
                 "This state directory belongs to a different NixOS target; use a separate --state directory."
             )
         plan = Plan(target.identity, snapshot, rules_hash=rules_hash)
+        unreadable = [name for name, info in snapshot.items() if info.get("unreadable")]
+        if unreadable:
+            plan.warnings.append(
+                "Unreadable auxiliary files were excluded from the candidate: "
+                + ", ".join(unreadable)
+                + ". If imported by Nix, they must be readable for evaluation to succeed."
+            )
         plan.managed_packages = dict(state.get("managed_packages", {}))
         values, packages, origins = mapped(backend, rules)
         if values:
@@ -318,6 +372,8 @@ class Engine:
                     plan.warnings.append(
                         "NixOS updates the configured hostname; the kernel hostname may remain unchanged until reboot. Status reports both values."
                     )
+            # Source-matching apply can still change runtime or the next boot.
+            # Retain explicit authorization for staged sensitive settings.
             if path.startswith(
                 (
                     "boot.",
@@ -326,6 +382,7 @@ class Engine:
                     "security.",
                     "services.openssh.",
                     "services.displayManager.",
+                    "services.desktopManager.",
                     "services.xserver.",
                 )
             ):

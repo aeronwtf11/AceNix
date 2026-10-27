@@ -58,6 +58,67 @@ def test_build_only_does_not_commit(transaction):
     assert not t.backups()
 
 
+def test_progress_only_reports_steps_that_are_reached(transaction):
+    t, p, config, rules = transaction
+    steps = []
+    t.progress = steps.append
+
+    def failed(target):
+        raise ToolError("real build failed")
+
+    t.backend.build = failed
+    with pytest.raises(ToolError):
+        apply(t, p, rules)
+    assert steps == ["Evaluating NixOS", "Building the system"]
+    assert not t.backups()
+
+
+def test_progress_reports_source_commit_only_after_confirmation(transaction):
+    t, p, config, rules = transaction
+    steps = []
+    t.progress = steps.append
+
+    def confirmed(*args):
+        assert steps == ["Evaluating NixOS", "Building the system"]
+        steps.append("Confirmed")
+
+    t.backend.activate = lambda *args: steps.append("Native activation returned")
+    assert apply(t, p, rules, confirm=confirmed)["result"] == "activated"
+    assert steps == [
+        "Evaluating NixOS",
+        "Building the system",
+        "Confirmed",
+        "Creating backups",
+        "Writing native configuration",
+        "Activating changes",
+        "Native activation returned",
+    ]
+
+
+def test_unreadable_auxiliary_file_does_not_block_candidate(transaction, monkeypatch):
+    t, p, config, rules = transaction
+    backup = config.with_suffix(".nix.save")
+    backup.write_text("private editor backup")
+    read = Path.read_bytes
+    # Use the OS exception rather than AceNix's administrator-error class.
+    import builtins
+
+    def os_restricted(path):
+        if path == backup:
+            raise builtins.PermissionError("not readable")
+        return read(path)
+
+    monkeypatch.setattr(Path, "read_bytes", os_restricted)
+    p.snapshot = source_snapshot(config.parent)
+    assert p.snapshot[backup.name]["unreadable"]
+    with t.candidate(p) as target:
+        assert not (target.root / backup.name).exists()
+        assert target.config.read_bytes() == p.changes[config.name][1]
+    backup.write_text("changed while the user could not read it")
+    with pytest.raises(ConflictError):
+        t.unchanged(p)
+
+
 def test_build_failure_keeps_source(transaction):
     t, p, config, rules = transaction
 

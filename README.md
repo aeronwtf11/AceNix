@@ -95,7 +95,9 @@ sudo -H acenix apply --mode switch
 
 `set`, `setr`, `install`, `remove`, `enable` and `disable` stage rules. **They do
 not activate or immediately rewrite configuration.nix.** `preview` evaluates an
-isolated candidate and shows real source diffs. Apply builds that candidate first.
+isolated candidate and summarizes changed and unchanged settings, packages,
+services, impact, rebuilds and possible reboots. Use `acenix preview --diff` for
+the full native file changes. Apply builds that candidate first.
 `--mode build` leaves native files and runtime unchanged. `test`, `boot` and
 `switch` commit the reviewed source files and invoke native activation, with
 explicit confirmation. Boot/network/authentication changes need an additional
@@ -262,6 +264,8 @@ system generations remain available independently of profiles.
 restores checked configuration backups; it never changes the running system.
 Rollback uses existing NixOS generations and never rewrites configuration.nix.
 No generations or backups are deleted automatically. Generation inspection
+reads native profile links without taking a writable Nix profile lock, so it
+works as an ordinary user. It
 distinguishes running, booted and profile-default systems. Next-boot defaults
 are read from systemd-boot metadata or supported GRUB numeric, named, saved and
 one-time entries. An unidentifiable default is reported as unknown.
@@ -275,7 +279,43 @@ Recovery refuses to overwrite subsequent external edits.
 ## CLI and development
 
 `acenix help COMMAND` and `acenix COMMAND --help` explain arguments. `--json`,
-`--quiet` and `--verbose` work on commands. Output uses plain accessible text.
+`--quiet` and `--verbose` work on commands. The human interface uses headings,
+aligned summaries and compact tables. Lists show the first 20 returned rows;
+`--all` expands them, and package search's `--limit` controls how many matches
+Nix returns. `--json` always includes the complete returned data and preserves
+structured errors and exit codes. `--quiet` suppresses results and progress,
+while errors remain visible. `--verbose` shows native diagnostics and additional
+metadata; preview also includes file diffs in verbose mode.
+
+```sh
+acenix status
+acenix preview
+acenix preview --diff
+acenix packages list --all
+acenix services search ssh
+acenix doctor --verbose
+acenix status --json
+```
+
+Colors appear only on compatible terminals and respect `NO_COLOR` (even when
+empty) and `TERM=dumb`. Redirected output has no ANSI colors or Unicode layout
+symbols. `--ascii` also disables both for accessibility. Headings and status
+words remain understandable without color. The three optional presentation
+exercises remain in `acenix/presentation.py`.
+
+Apply reports actual validation, evaluation, build, backup, source-write and
+activation steps as they begin. A failed step cannot produce a success message.
+Build-only, temporary activation and next-boot installation have distinct result
+messages. Status shows evaluated configuration and runtime hostname separately;
+it does not claim that saved rules are pending changes or that diagnostics passed.
+
+Unreadable auxiliary files, such as root-owned editor backups, are omitted from
+the temporary candidate and reported as warnings. Their metadata remains in
+the conflict snapshot. Imported files must still be readable; AceNix does not
+substitute missing configuration. Local path flakes additionally need all files
+Nix copies into its source snapshot to be readable. Doctor reports missing
+write access as a warning when read-only inspection is otherwise available.
+
 Exit codes: 0 completed; 1 general/diagnostic failure; 2 invalid input; 3 native
 tool failure; 4 conflicts; 5 permissions; 6 confirmation declined; 130 interrupted.
 No telemetry is collected.
@@ -289,7 +329,9 @@ python3 -m venv .venv
 ACENIX_NIX_TESTS=1 .venv/bin/pytest -m nix
 ```
 
-`nix develop` supplies the Python test environment and native tools. CI runs
+`nix develop` supplies the installed `acenix` command, Python test environment
+and native tools. Functional tests invoke `acenix`, using isolated fixture
+configuration, rule and state paths. CI runs
 Python tests and packaging, real NixOS evaluation, and disposable GRUB/channel
 and EFI/flake machines that build, activate, reboot, recover and roll back.
 `scripts/check-python.sh` reproduces the Python 3.11–3.13 jobs using Docker;

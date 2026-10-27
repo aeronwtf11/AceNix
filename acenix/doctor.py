@@ -68,7 +68,18 @@ def diagnose(args, store):
             )
         return details
 
-    record("source permissions", permissions)
+    try:
+        checks.append(
+            {"check": "source permissions", "status": "ok", "detail": permissions()}
+        )
+    except PermissionError:
+        checks.append(
+            {
+                "check": "source permissions",
+                "status": "warning",
+                "detail": "Read-only access: inspection and preview are available. Applying native changes needs administrator write access; keep the same rules and state paths when granting it.",
+            }
+        )
     record("private state directory", store.inspect)
     record("managed state", store.read)
 
@@ -117,7 +128,7 @@ def diagnose(args, store):
 
     record("backups and recovery", backups)
     return {
-        "healthy": all(row["status"] == "ok" for row in checks),
+        "healthy": all(row["status"] in {"ok", "warning"} for row in checks),
         "checks": checks,
         "note": "No sources, services or system settings were modified.",
     }

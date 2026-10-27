@@ -21,8 +21,9 @@ from .storage import atomic_write, digest, now, safe_path
 
 
 class Transactions:
-    def __init__(self, backend, store):
+    def __init__(self, backend, store, progress=None):
         self.backend, self.store = backend, store
+        self.progress = progress or (lambda message: None)
         if store.root.resolve().is_relative_to(backend.target.root):
             raise ValidationError(
                 "Choose a state directory outside the native configuration tree, so journals cannot modify their own source snapshot."
@@ -41,6 +42,12 @@ class Transactions:
             root = Path(directory) / "configuration"
             root.mkdir(mode=0o700)
             for relative, info in plan.snapshot.items():
+                if info.get("unreadable"):
+                    if relative in plan.changes:
+                        raise PermissionError(
+                            f"Cannot edit unreadable native input: {relative}"
+                        )
+                    continue
                 path = root / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
                 data = (
@@ -128,8 +135,10 @@ class Transactions:
                     "test/boot/switch activation requires NixOS; use --mode build for a candidate build."
                 )
         with self.candidate(plan) as target:
+            self.progress("Evaluating NixOS")
             self.validate(plan, target)
             try:
+                self.progress("Building the system")
                 system = self.backend.build(target)
             except ToolError:
                 self.store.history(
@@ -172,11 +181,14 @@ class Transactions:
                 raise ConflictError(
                     "Rule file changed during candidate build; run preview again."
                 )
+            self.progress("Creating backups")
             backup = self._backup(plan, system, mode)
             committed = []
             activated = False
             activation_started = False
             try:
+                if plan.changes:
+                    self.progress("Writing native configuration")
                 for name, (before, after) in plan.changes.items():
                     atomic_write(
                         self.backend.target.root / name, after, expected=digest(before)
@@ -194,6 +206,11 @@ class Transactions:
                         "Native files changed during source commit; activation was not started."
                     )
                 activation_started = True
+                self.progress(
+                    "Installing the next-boot system"
+                    if mode == "boot"
+                    else "Activating changes"
+                )
                 self.backend.activate(system, mode)
                 activated = True
                 backup["status"] = "completed"

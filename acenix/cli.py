@@ -20,7 +20,7 @@ from .errors import (
 from .fastfetch import Fastfetch
 from .generations import generations, rollback
 from .nixos import NixOS, discover
-from .presentation import human
+from .presentation import Terminal, failure, human
 from .profiles import Profiles
 from .storage import Store, atomic_write, digest
 from .transactions import Transactions
@@ -33,8 +33,16 @@ def xdg(name, fallback):
 
 
 def output_flags(parser):
-    for name in ["json", "quiet", "verbose"]:
-        parser.add_argument("--" + name, action="store_true", default=argparse.SUPPRESS)
+    for name, help in [
+        ("json", "Return complete machine-readable data"),
+        ("quiet", "Suppress results and progress"),
+        ("verbose", "Show detailed output and full diagnostics"),
+        ("all", "Show all returned table rows (JSON always includes them)"),
+        ("ascii", "Use plain ASCII without ANSI colors or Unicode symbols"),
+    ]:
+        parser.add_argument(
+            "--" + name, action="store_true", default=argparse.SUPPRESS, help=help
+        )
 
 
 def confirmation_flags(child):
@@ -135,7 +143,11 @@ def parser():
                 help="Only stage the profile; do not activate",
             )
             apply_flags(child)
-    command("preview", "Evaluate a candidate and show native diffs")
+    command("preview", "Evaluate a candidate and summarize changes").add_argument(
+        "--diff",
+        action="store_true",
+        help="Include detailed native file diffs (may contain sensitive values)",
+    )
     apply_flags(
         command("apply", "Build and explicitly activate a validated transaction")
     )
@@ -166,7 +178,13 @@ def confirm(args, summary, action):
         "recover",
         "update",
     }
-    print(human(summary), file=sys.stderr)
+    if not getattr(args, "quiet", False):
+        print(
+            json.dumps({"confirmation": summary}, ensure_ascii=False)
+            if getattr(args, "json", False)
+            else human(summary, stream=sys.stderr, ascii=getattr(args, "ascii", False)),
+            file=sys.stderr,
+        )
     if args.yes:
         if impact and not args.allow_high_impact:
             raise Cancelled(
@@ -198,6 +216,7 @@ def stage(args, store, updates):
     )
     return {
         "result": "staged",
+        "staged": [key for key, _, _ in updates],
         "rules": str(args.rules),
         "next": "Run preview, then apply. Native configuration is unchanged.",
     }
@@ -251,7 +270,17 @@ def dispatch(args):
             if args.action == "export":
                 return profiles.export(args.name, args.file)
     backend = NixOS(discover(args.config, args.flake, args.host, args.module))
-    target, transactions = backend.target, Transactions(backend, store)
+
+    def progress(message):
+        if not args.quiet and not args.json:
+            terminal = Terminal(stream=sys.stderr, ascii=args.ascii)
+            terminal.text("... " + message)
+            print(terminal.result(), file=sys.stderr, flush=True)
+
+    target, transactions = (
+        backend.target,
+        Transactions(backend, store, progress=progress),
+    )
     if command == "get":
         if args.option:
             return backend.get(args.option)
@@ -270,14 +299,7 @@ def dispatch(args):
             return backend.package_search(args.query, args.limit)
         return backend.package(args.name)
     if command == "services":
-        paths = [
-            p
-            for p in backend.options(getattr(args, "query", ""))
-            if p.startswith("services.") and p.endswith(".enable")
-        ]
-        return backend.eval(
-            f'builtins.listToAttrs (map (path: {{ name = lib.concatStringsSep "." path; value = lib.attrByPath path null n.config; }}) {rules.to_nix([list(rules.attr_parts(p)) for p in paths])})'
-        )
+        return backend.services(getattr(args, "query", ""))
     if command == "service":
         option = service_option(backend, args.name)
         unit = {"ssh": "sshd", "sshd": "sshd", "printing": "cups"}.get(
@@ -316,6 +338,7 @@ def dispatch(args):
         runtime = os.uname().nodename if Path("/etc/NIXOS").exists() else None
         return {
             "version": __version__,
+            **backend.overview(),
             "target": target.identity,
             "hostname": configured,
             "runtime_hostname": runtime,
@@ -399,6 +422,7 @@ def dispatch(args):
                     "activation_performed": False,
                 }
             try:
+                progress("Validating configuration")
                 plan = Engine(backend).plan(
                     rules.load(args.rules), store.read(), digest(text.encode())
                 )
@@ -425,6 +449,8 @@ def dispatch(args):
             return {**result, "profile": args.name}
         if command in {"preview", "apply"}:
             data = args.rules.read_bytes() if args.rules.exists() else b""
+            if command == "apply":
+                progress("Validating configuration")
             plan = Engine(backend).plan(
                 rules.parse(data.decode(), str(args.rules)), store.read(), digest(data)
             )
@@ -438,7 +464,7 @@ def dispatch(args):
 
 def main(argv=None):
     args = parser().parse_args(argv)
-    for flag in ["json", "quiet", "verbose"]:
+    for flag in ["json", "quiet", "verbose", "all", "ascii"]:
         if not hasattr(args, flag):
             setattr(args, flag, False)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING)
@@ -448,7 +474,15 @@ def main(argv=None):
             print(
                 json.dumps(result, indent=2, ensure_ascii=False)
                 if args.json
-                else human(result)
+                else human(
+                    result,
+                    args.command,
+                    getattr(args, "action", None),
+                    verbose=args.verbose,
+                    details=getattr(args, "diff", False),
+                    all_rows=args.all,
+                    ascii=args.ascii,
+                )
             )
         return 1 if args.command == "doctor" and not result["healthy"] else 0
     except (AceNixError, OSError, UnicodeError) as error:
@@ -462,7 +496,7 @@ def main(argv=None):
         if args.json:
             print(json.dumps({"error": str(error), "exit_code": code}), file=sys.stderr)
         else:
-            print(f"ERROR: {error}", file=sys.stderr)
+            print(failure(error, stream=sys.stderr, ascii=args.ascii), file=sys.stderr)
         if args.verbose:
             logging.exception("AceNix operation failed")
         return code

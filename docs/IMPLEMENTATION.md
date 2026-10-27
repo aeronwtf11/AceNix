@@ -1,7 +1,8 @@
 # Implementation and verification
 
-AceNix 1.0.0 implements the components below. All listed acceptance assertions
-have passed; see [RELEASING.md](RELEASING.md) for reproduction.
+AceNix 1.0.0 implements the components below. Initial-release acceptance evidence
+is recorded here; see [RELEASING.md](RELEASING.md) for reproduction and the
+[debug-log and terminal UX follow-up](DEBUG-2026-10-27.md) for subsequent fixes.
 
 - [x] Preserve the original parser flow, comments, config.sys and entry points.
 - [x] Typed portable rules, source locations, validation, persistence and installed CLI.
@@ -15,7 +16,7 @@ have passed; see [RELEASING.md](RELEASING.md) for reproduction.
 - [x] Complete real GRUB/channel and EFI/flake VM acceptance.
 - [x] Optional Fastfetch integration and exactly three small learning exercises.
 
-## Verification evidence
+## Initial release verification evidence
 
 - The enabled full run passes all **166 tests without skips**: 138 unit/contract
   tests and 28 actual native evaluation cases. These cover custom declared

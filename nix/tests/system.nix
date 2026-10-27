@@ -263,8 +263,10 @@ pkgs.testers.runNixOSTest {
         assert preview["validation"] == "candidate evaluated", preview
         assert any(row["file"] == "services.nix" for row in preview["files"]), preview
         before = sources()
-        result = command("apply --mode build")
-        assert result["result"] == "built", result
+        output = machine.succeed(cli + "apply --mode build --ascii 2>&1")
+        assert 'Validating configuration' in output and 'Evaluating NixOS' in output, output
+        assert 'Building the system' in output and 'Build Complete' in output, output
+        assert 'Creating backups' not in output and 'Activating changes' not in output, output
         assert sources() == before
         assert current() == initial_runtime and profile() == initial_profile
 
@@ -342,6 +344,25 @@ pkgs.testers.runNixOSTest {
         failure = machine.fail("su nobody -s /bin/sh -c " + shlex.quote(unprivileged) + " 2>&1")
         assert json.loads(failure)['exit_code'] == 5, failure
         assert sources() == edited
+
+    with subtest("unprivileged generation inspection needs no profile write lock"):
+        read_cli = "HOME=/tmp/acenix-unprivileged-home XDG_CACHE_HOME=/tmp/acenix-unprivileged-home/.cache NIX_PATH=nixpkgs=${nixpkgsPath} acenix " + target + " --rules /tmp/acenix-public.sys --state /tmp/acenix-unprivileged "
+        output = machine.succeed("su nobody -s /bin/sh -c " + shlex.quote(read_cli + "generations --json"))
+        assert json.loads(output)['generations'], output
+        output = machine.succeed("su nobody -s /bin/sh -c " + shlex.quote(read_cli + "doctor --json"))
+        diagnosis = json.loads(output)
+        assert diagnosis['healthy'] is True, diagnosis
+        assert any(row['check'] == 'source permissions' and row['status'] == 'warning' for row in diagnosis['checks']), diagnosis
+        ${lib.optionalString (!flakeMode) ''
+          machine.succeed("install -m 600 /dev/null /etc/nixos/configuration.nix.save")
+          before, running, boot_profile = sources(), current(), profile()
+          output = machine.succeed("su nobody -s /bin/sh -c " + shlex.quote(read_cli + "preview --json"))
+          preview = json.loads(output)
+          assert preview['validation'] == 'candidate evaluated', preview
+          assert any('configuration.nix.save' in warning for warning in preview['warnings']), preview
+          assert sources() == before and current() == running and profile() == boot_profile
+          machine.succeed("rm /etc/nixos/configuration.nix.save")
+        ''}
 
     with subtest("profiles and updates use real persistent documents and native inputs"):
         command("profile create development")

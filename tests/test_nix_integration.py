@@ -49,6 +49,91 @@ def test_metadata_and_nested_submodule(native):
     assert backend.get("networking.hostName") == "before"
 
 
+def test_removed_service_option_does_not_break_native_service_search(native):
+    backend, _ = native
+    services = backend.target.root / "services.nix"
+    services.write_text("""{ lib, ... }: {
+      options.services.acenix-retired.enable = lib.mkOption {
+        type = lib.types.bool;
+        default = throw "This service option was removed";
+      };
+      options.services.acenix-hidden.enable = lib.mkOption {
+        type = lib.types.bool;
+        visible = false;
+        default = abort "An obsolete compatibility alias must not be forced";
+      };
+      config.services.openssh.enable = false;
+    }""")
+    result = backend.services()
+    assert result["services.acenix-retired.enable"] is None
+    assert result["services.acenix-hidden.enable"] is None
+    assert result["services.openssh.enable"] is False
+
+
+def test_standalone_cli_previews_around_unreadable_backup(native, tmp_path):
+    import json
+    import shutil
+    import subprocess
+
+    backend, store = native
+    executable = shutil.which("acenix")
+    assert executable, "Install the standalone CLI before running native CLI tests"
+    document = tmp_path / "rules.sys"
+    backup = backend.target.root / "configuration.nix.save"
+    backup.write_text("private editor backup")
+    backup.chmod(0)
+    before = backend.target.config.read_bytes()
+    flags = [
+        executable,
+        "--config",
+        str(backend.target.config),
+        "--rules",
+        str(document),
+        "--state",
+        str(store.root),
+    ]
+    staged = subprocess.run(
+        flags + ["setr", "hostname:standalone-test", "--json"],
+        capture_output=True,
+        text=True,
+    )
+    assert staged.returncode == 0, staged.stderr
+    result = subprocess.run(
+        flags + ["preview", "--json"], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["validation"] == "candidate evaluated"
+    assert data["change_count"] == 1
+    assert data["reboot_may_be_required"] is True
+    assert backend.target.config.read_bytes() == before
+    assert backend.get("networking.hostName") == "before"
+    # Root can read mode-000 files. The native non-root run additionally checks
+    # that exclusion warnings identify the backup, while unit tests force EACCES.
+    if os.geteuid() != 0:
+        assert any(backup.name in warning for warning in data["warnings"])
+    text = subprocess.run(
+        flags + ["preview", "--ascii"], capture_output=True, text=True
+    )
+    assert text.returncode == 0, text.stderr
+    assert (
+        "Configuration Preview" in text.stdout
+        and "+ networking.hostName" not in text.stdout
+    )
+    assert "before -> standalone-test" in text.stdout and "@@" not in text.stdout
+
+
+def test_unreadable_import_is_not_silently_ignored(native):
+    backend, store = native
+    if os.geteuid() == 0:
+        pytest.skip("Root can read mode-000 configuration files")
+    services = backend.target.root / "services.nix"
+    services.chmod(0)
+    with pytest.raises((ToolError, PermissionError)):
+        plan = Engine(backend).plan(parse("hostname:test"), {})
+        Transactions(backend, store).preview(plan)
+
+
 @pytest.mark.parametrize(
     "values",
     [
@@ -73,6 +158,14 @@ def test_invalid_type_is_rejected(native):
     backend, _ = native
     with pytest.raises(ToolError):
         backend.validate({"services.openssh.enable": "yes"})
+
+
+def test_matching_sensitive_rules_keep_activation_authorization(native):
+    backend, _ = native
+    plan = Engine(backend).plan(parse("hostname:before"), {})
+    assert plan.changes == {}
+    assert "networking.hostName" in plan.high_impact
+    assert plan.public()["change_count"] == 0
 
 
 def test_invalid_enum_and_read_only_option(native):

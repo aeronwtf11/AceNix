@@ -180,6 +180,24 @@ class NixOS:
             f"if lib.hasAttrByPath {parts} n.config then render (lib.getAttrFromPath {parts} n.config) else {{ __acenixAbsent = true; }}"
         )
 
+    def overview(self):
+        return self.eval("""let
+          read = path: let value = builtins.tryEval (builtins.deepSeq
+            (lib.attrByPath path null n.config) (lib.attrByPath path null n.config));
+            in if value.success then value.value else null;
+          enabled = path: read path == true;
+        in {
+          nixos_release = read [ "system" "nixos" "release" ];
+          desktop = lib.optional (enabled [ "services" "desktopManager" "plasma6" "enable" ]
+            || enabled [ "services" "xserver" "desktopManager" "plasma5" "enable" ]) "KDE Plasma"
+            ++ lib.optional (enabled [ "services" "desktopManager" "gnome" "enable" ]
+            || enabled [ "services" "xserver" "desktopManager" "gnome" "enable" ]) "GNOME"
+            ++ lib.optional (enabled [ "services" "xserver" "desktopManager" "xfce" "enable" ]) "Xfce"
+            ++ lib.optional (enabled [ "programs" "hyprland" "enable" ]) "Hyprland";
+          network_manager = read [ "networking" "networkmanager" "enable" ];
+          bluetooth = read [ "hardware" "bluetooth" "enable" ];
+        }""")
+
     def options(self, query=""):
         if self._options is None:
             paths = self.eval("""let walk = prefix: tree:
@@ -191,6 +209,27 @@ class NixOS:
         return sorted(
             path for path in self._options if query.casefold() in path.casefold()
         )
+
+    def services(self, query=""):
+        paths = [
+            list(attr_parts(path))
+            for path in self.options(query)
+            if path.startswith("services.") and path.endswith(".enable")
+        ]
+        # Removed/renamed NixOS options remain in the option catalogue and may
+        # deliberately throw on evaluation. Isolate each value so one obsolete
+        # alias cannot break the complete native service listing.
+        return self.eval(f"""builtins.listToAttrs (map (path:
+          let option = lib.attrByPath path {{}} n.options;
+            value = builtins.tryEval (builtins.deepSeq
+            (lib.attrByPath path null n.config) (lib.attrByPath path null n.config));
+          in {{ name = lib.concatStringsSep "." path;
+            # Hidden compatibility aliases can abort (not catchable by
+            # tryEval) when their replacement no longer exists. Do not force
+            # those obsolete values just to display a service catalogue.
+            value = if (option.visible or true) == false then null
+              else if value.success then value.value else null;
+          }}) {to_nix(paths)})""")
 
     def info(self, path):
         path = validate_attr(path)

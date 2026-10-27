@@ -1,6 +1,8 @@
 """Inspect native generations; source backups and system rollback stay distinct."""
 
 import json
+from datetime import datetime
+import os
 from pathlib import Path
 import re
 import shutil
@@ -12,27 +14,35 @@ PROFILE = Path("/nix/var/nix/profiles/system")
 
 
 def generations(runner=run, profile=PROFILE, boot=Path("/boot")):
-    output = runner(["nix-env", "--profile", str(profile), "--list-generations"])
+    # nix-env --list-generations takes a writable profile lock, even though
+    # this command only inspects state. Read Nix's native generation symlinks
+    # directly so normal users can inspect the system profile without sudo.
+    profile = Path(profile)
     result = []
     running = Path("/run/current-system").resolve()
     booted = Path("/run/booted-system").resolve()
-    for line in output.splitlines():
-        match = re.fullmatch(r"\s*(\d+)\s+(\S+)\s+(\S+)(?:\s+\(current\))?\s*", line)
-        if not match:
-            raise ToolError(f"Unrecognized native generation output: {line!r}")
+    current = os.readlink(profile) if profile.is_symlink() else None
+    entries = list(profile.parent.iterdir()) if profile.parent.exists() else []
+    for path in entries:
+        match = re.fullmatch(re.escape(profile.name) + r"-(\d+)-link", path.name)
+        if not match or not path.is_symlink():
+            continue
         number = int(match[1])
-        path = profile.parent / f"{profile.name}-{number}-link"
         result.append(
             {
                 "generation": number,
-                "created": f"{match[2]} {match[3]}",
-                "profile_default": "(current)" in line,
+                "created": datetime.fromtimestamp(path.lstat().st_mtime).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                ),
+                "profile_default": current is not None
+                and Path(current).name == path.name,
                 "running": path.resolve() == running,
                 "booted": path.resolve() == booted,
                 "path": str(path),
                 "boot_default": None,
             }
         )
+    result.sort(key=lambda row: row["generation"])
     note = "Next-boot default is unknown; the native system profile default is shown separately."
     if shutil.which("bootctl"):
         try:

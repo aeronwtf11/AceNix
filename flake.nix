@@ -33,7 +33,7 @@
       devShells = eachSystem (system:
         let pkgs = import nixpkgs { inherit system; };
         in { default = pkgs.mkShell {
-          packages = [ (pkgs.python3.withPackages (p: [ p.pytest p.setuptools p.build ])) pkgs.nix pkgs.nixos-rebuild ];
+          packages = [ self.packages.${system}.default (pkgs.python3.withPackages (p: [ p.pytest p.setuptools p.build ])) pkgs.nix pkgs.nixos-rebuild ];
           shellHook = ''
             export PYTHONPATH="$PWD''${PYTHONPATH:+:$PYTHONPATH}"
             export NIX_PATH="nixpkgs=${nixpkgs}''${NIX_PATH:+:$NIX_PATH}"
