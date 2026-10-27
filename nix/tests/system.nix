@@ -299,7 +299,7 @@ pkgs.testers.runNixOSTest {
     with subtest("real builder failure cannot commit native sources"):
         command("set acenix.testBuilderCommand 'str:echo ACENIX_EXPECTED_BUILD_FAILURE >&2; exit 1'")
         before, running, boot_profile = sources(), current(), profile()
-        failure = machine.fail(cli + "apply --mode build --json")
+        failure = machine.fail(cli + "apply --mode build --json 2>&1")
         assert 'ACENIX_EXPECTED_BUILD_FAILURE' in failure, failure
         assert sources() == before and current() == running and profile() == boot_profile
         command("set acenix.testBuilderCommand 'str:'")
@@ -309,12 +309,12 @@ pkgs.testers.runNixOSTest {
         command("preview")
         machine.succeed("echo '# external edit' >> /etc/nixos/services.nix")
         edited = sources()
-        failure = machine.fail(cli + "apply --mode switch" + authorization + " --json")
+        failure = machine.fail(cli + "apply --mode switch" + authorization + " --json 2>&1")
         assert json.loads(failure)['exit_code'] == 4, failure
         assert sources() == edited
         machine.succeed("printf 'hostname:unprivileged\\n' > /tmp/acenix-public.sys; chmod 644 /tmp/acenix-public.sys")
         unprivileged = "NIX_PATH=nixpkgs=${nixpkgsPath} acenix " + target + " --rules /tmp/acenix-public.sys --state /tmp/acenix-unprivileged apply --mode switch --yes --allow-high-impact --json"
-        failure = machine.fail("su nobody -s /bin/sh -c " + shlex.quote(unprivileged))
+        failure = machine.fail("su nobody -s /bin/sh -c " + shlex.quote(unprivileged) + " 2>&1")
         assert json.loads(failure)['exit_code'] == 5, failure
         assert sources() == edited
 
