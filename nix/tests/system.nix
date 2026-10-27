@@ -115,7 +115,9 @@ pkgs.testers.runNixOSTest {
   name = "acenix-${if flakeMode then "flake" else "traditional"}-${if efi then "efi" else "grub"}";
   node.pkgsReadOnly = false;
   requiredFeatures.kvm = false;
-  globalTimeout = 3600;
+  # Full native rebuild/evaluation sequences also run under TCG on CI hosts
+  # without KVM; keep the same assertions with a generous overall deadline.
+  globalTimeout = 7200;
   nodes.machine = { lib, pkgs, ... }: {
     imports = [
       (nixpkgsPath + "/nixos/modules/profiles/minimal.nix")
