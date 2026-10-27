@@ -2,7 +2,7 @@
 let
   inherit (pkgs) lib;
   source = acenix.src;
-  nixpkgsPath = pkgs.path;
+  nixpkgsPath = builtins.path { path = pkgs.path; name = "source"; };
   bootSettings = if efi then ''
     boot.loader.grub.enable = false;
     boot.loader.systemd-boot.enable = true;
@@ -94,7 +94,7 @@ let
     in map (path: builtins.appendContext path (builtins.getContext arguments)) (lib.unique paths);
   localFlake = pkgs.writeText "flake.nix" ''
     {
-      inputs.nixpkgs.url = "path:${pkgs.path}";
+      inputs.nixpkgs.url = "path:${nixpkgsPath}";
       outputs = { nixpkgs, ... }: {
         nixosConfigurations.fixture = nixpkgs.lib.nixosSystem {
           system = "${pkgs.stdenv.hostPlatform.system}";
@@ -138,7 +138,7 @@ pkgs.testers.runNixOSTest {
     boot.loader.systemd-boot.enable = lib.mkForce efi;
     boot.loader.efi.canTouchEfiVariables = efi;
     boot.growPartition = true;
-    fileSystems."/".autoResize = true;
+    virtualisation.fileSystems."/".autoResize = true;
     documentation.enable = lib.mkForce false;
     documentation.nixos.enable = lib.mkForce false;
     hardware.firmware = lib.mkForce [ ];
@@ -176,7 +176,7 @@ pkgs.testers.runNixOSTest {
     machine.start()
     machine.wait_for_unit("multi-user.target")
     machine.succeed("udevadm settle")
-    machine.succeed("df -h /; df -i /")
+    print(machine.succeed("df -h /", "df -i /"))
     machine.copy_from_host("${hardware}", "/etc/nixos/hardware-configuration.nix")
     machine.copy_from_host("${configuration}", "/etc/nixos/configuration.nix")
     machine.copy_from_host("${serviceModule}", "/etc/nixos/services.nix")
@@ -241,7 +241,9 @@ pkgs.testers.runNixOSTest {
         status = command('service status ssh')
         assert status['declarative_enabled'] is True and status['runtime']['ActiveState'] == 'active', status
         machine.succeed("hello | grep 'Hello, world!'")
-        assert machine.succeed("hostname").strip() == "acenix-a"
+        assert machine.succeed("cat /etc/hostname").strip() == "acenix-a"
+        status = command('status')
+        assert status['hostname'] == 'acenix-a' and status['runtime_hostname'] == machine.succeed('hostname').strip(), status
         assert profile() == initial_profile
         assert current() != initial_runtime
         tested_runtime = current()
@@ -262,7 +264,7 @@ pkgs.testers.runNixOSTest {
         command("remove hello")
         result = command("apply --mode switch" + authorization)
         backup_b = result["backup"]
-        assert machine.succeed("hostname").strip() == "acenix-b"
+        assert machine.succeed("cat /etc/hostname").strip() == "acenix-b"
         machine.succeed("command -v vim")
         machine.fail("test -x /run/current-system/sw/bin/hello")
         source_b = sources()
@@ -272,7 +274,7 @@ pkgs.testers.runNixOSTest {
         result = command(f"rollback --generation {generation_a}" + authorization)
         assert result["result"] == "rolled-back", result
         assert sources() == source_b
-        assert machine.succeed("hostname").strip() == "acenix-a"
+        assert machine.succeed("cat /etc/hostname").strip() == "acenix-a"
         machine.succeed("hello")
 
     with subtest("source recovery restores ownership without activating the system"):
@@ -309,7 +311,7 @@ pkgs.testers.runNixOSTest {
         assert "development" in command("profile list")
         result = command('profile activate development --mode test' + authorization)
         assert result['result'] == 'activated', result
-        assert machine.succeed('hostname').strip() == 'acenix-c'
+        assert machine.succeed('cat /etc/hostname').strip() == 'acenix-c'
         assert command('status')['managed_state']['active_profile'] == 'development'
         assert command('doctor')['healthy'] is True
         running = current()

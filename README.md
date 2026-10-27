@@ -67,6 +67,13 @@ isolated candidate and shows real source diffs. Apply builds that candidate firs
 explicit confirmation. Boot/network/authentication changes need an additional
 high-impact acknowledgment. Automation can use `--yes --allow-high-impact`.
 
+Native activation can leave settings pending until reboot. For example, NixOS
+can update `/etc/hostname` while the kernel retains its previous hostname.
+`status` reports the target's configured `hostname`, the local NixOS
+`runtime_hostname`, and whether they differ. Services report their live systemd
+state separately. A completed activation means the native procedure finished;
+it does not imply that every boot-time setting changed immediately.
+
 AceNix never invokes sudo. Staging, inspection and candidate builds can run as
 an ordinary user. Source commits and activation need administrator permissions.
 When explicitly running with administrator privileges, pass the same absolute

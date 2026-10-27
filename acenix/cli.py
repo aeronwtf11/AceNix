@@ -312,10 +312,14 @@ def dispatch(args):
     if command == "backups":
         return transactions.backups()
     if command == "status":
+        configured = backend.get("networking.hostName")
+        runtime = os.uname().nodename if Path("/etc/NIXOS").exists() else None
         return {
             "version": __version__,
             "target": target.identity,
-            "hostname": backend.get("networking.hostName"),
+            "hostname": configured,
+            "runtime_hostname": runtime,
+            "hostname_pending_runtime": runtime is not None and runtime != configured,
             "staged_rules": len(rules.load(args.rules)),
             "rules_file": str(args.rules),
             "managed_state": store.read(),

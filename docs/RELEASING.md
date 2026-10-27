@@ -57,10 +57,11 @@ Each machine verifies:
 - An uncached system builder executes inside the guest and produces a real marker.
 - Preview identifies imported source edits and validates the complete candidate.
 - Build mode preserves source files, the running system and the system profile.
-- Test mode changes hostname, packages and the live SSH service without changing
+- Test mode changes the configured hostname, packages and the live SSH service without changing
   the boot profile. Service status agrees with systemd.
 - Boot after test works even when native sources already match. Generation
-  inspection identifies the boot default; reboot selects that system.
+  inspection identifies the boot default; reboot selects that system and verifies
+  the actual kernel hostname. Status distinguishes it from the configured value.
 - Switch changes runtime/profile, removes an owned package, and preserves Vim
   and user comments.
 - Native rollback selects an existing generation and leaves native source alone.

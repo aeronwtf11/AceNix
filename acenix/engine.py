@@ -313,6 +313,10 @@ class Engine:
             if current != serial:
                 file = choose(path)
                 edit(file, lambda editor, p=path, v=requested: editor.set(p, v))
+                if path == "networking.hostName":
+                    plan.warnings.append(
+                        "NixOS updates the configured hostname; the kernel hostname may remain unchanged until reboot. Status reports both values."
+                    )
             if path.startswith(
                 (
                     "boot.",

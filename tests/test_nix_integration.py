@@ -119,6 +119,34 @@ def test_real_cli_stages_and_previews_without_native_writes(native, tmp_path, ca
     assert rules_file.read_bytes() == previous
 
 
+def test_status_separates_target_hostname_from_running_kernel(native, tmp_path, capsys):
+    import json
+    from acenix.cli import main
+
+    backend, store = native
+    assert (
+        main(
+            [
+                "--config",
+                str(backend.target.config),
+                "--state",
+                str(store.root),
+                "--rules",
+                str(tmp_path / "rules"),
+                "status",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["hostname"] == "before"
+    if Path("/etc/NIXOS").exists():
+        assert result["runtime_hostname"] == os.uname().nodename
+    else:
+        assert result["runtime_hostname"] is None
+
+
 def test_preview_changes_actual_imported_file_and_leaves_sources_unchanged(native):
     backend, store = native
     original = backend.target.config.read_bytes()

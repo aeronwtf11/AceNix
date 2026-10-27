@@ -17,17 +17,19 @@ the real VM acceptance runs described in [RELEASING.md](RELEASING.md).
 
 ## Verified development checks
 
-- 138 unit/contract tests pass. Actual native evaluation additionally covers 25
-  cases, including custom declared options, paths, priority conflicts and assertions.
+- The enabled full run passes all 163 tests without skips: 138 unit/contract
+  tests and 25 actual native evaluation cases, including custom declared options,
+  paths, priority conflicts and assertions.
 - The Nix package builds successfully and runs the unit suite during packaging.
-- Wheel/sdist builds and clean wheel installation work. Python 3.11, 3.12 and
-  3.13 container jobs have passed; final release artifacts are checked separately.
+- Python 3.11, 3.12 and 3.13 each pass all 138 unit tests, lint/format checks,
+  wheel/sdist builds and clean wheel installation in disposable containers.
 - Package derivations evaluate for x86_64-linux and aarch64-linux. ARM builds and
   ARM booting have not been tested.
 - A registered channel update passed in an isolated Nix container and selected
   only the channel supplying the target's Nixpkgs.
-- Real NixOS boot and native switch activation passed in the disposable GRUB VM.
-  The rest of the boot acceptance matrix is still running.
+- Real NixOS boot, native switch activation, an uncached builder and build-only
+  preservation checks passed in the disposable GRUB VM. The EFI machine also
+  boots. The rest of the acceptance matrix is still running.
 
 The tested sources pin NixOS 26.05 Nixpkgs revision
 `1f607aa79b6356ed45d3cd3c8079c196e79efa2c`. Native evaluation also works with
