@@ -1,56 +1,98 @@
 # Release verification
 
-The application version remains **0.2.0**, not v1.0. Do not change it to 1.0
-until these checks have passed on disposable NixOS machines and the owner has
-resolved the license. Local evaluation and mocked transaction tests cannot prove
-real boot/activation behavior.
+Promote the version only after the application checks below pass. Keep release
+verification separate from publishing a tag or uploading artifacts.
 
-## Developer checks
+## Python and packaging
 
-1. Install the pinned `requirements-test.txt` and the package in an isolated venv.
-2. Run `ruff check --select F .`, `ruff format --check .`, and `pytest -m 'not nix'`.
-3. With actual nixpkgs/Nix tools, run `ACENIX_NIX_TESTS=1 pytest -m nix`.
-   Check the executed test counts; skipped tests do not validate native evaluation.
-4. Run `python -m build`, install the wheel into a clean venv, and exercise the
-   executable entry point and `core/main.py` help.
-5. Run `nix flake check --print-build-logs` for the pinned package. Evaluate both
-   advertised architectures; cross-platform evaluation is not a cross build.
-6. Run CI on Python 3.11, 3.12 and 3.13. A workflow file alone is not CI evidence.
+```sh
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-test.txt -e .
+.venv/bin/ruff check --select F .
+.venv/bin/ruff format --check .
+.venv/bin/pytest -m 'not nix'
+.venv/bin/python -m build
+```
 
-## Disposable VM acceptance matrix
+Install the resulting wheel into a clean venv outside the checkout and exercise
+`acenix --help`, `acenix --version` and `python -m core.main --help`. The script
+`scripts/check-python.sh` runs tests, lint, wheel/sdist creation and clean wheel
+installation in disposable Python 3.11, 3.12 and 3.13 Docker containers. It forwards
+proxy settings and the public CA bundle while retaining certificate validation.
+The checkout is mounted read-only.
 
-For a conventional channel target and a locked-flake target:
+## Actual native evaluation
 
-- Snapshot the VM and use separate source/rule/state directories.
-- Inspect current hostname, option defaults, packages, services and generations.
-- Stage hostname/timezone, a package and a service change. Preview must show the
-  actual imported source file and current/requested values.
-- Build mode must build the candidate without changing source/runtime/profile.
-- Cancel activation after a successful build; no native source should change.
-- Exercise test mode (runtime, not boot profile), boot mode (next boot, not current
-  runtime), and switch mode (runtime plus boot profile). Verify systemd state and
-  `/run/current-system`, system-profile and bootloader entries directly.
-- Reboot and verify boot-default behavior. Repeat with systemd-boot and GRUB;
-  GRUB's next-boot default is currently reported as unknown.
-- Remove only the owned package and verify external packages remain installed.
-- Activate a profile; verify only its explicit rules change.
-- Introduce invalid types, invalid Nix, an assertion failure and a build failure.
-  None may activate or leave unreported source changes.
-- Edit a native file after preview and during build. Commit must refuse it.
-- Inject commit/activation failures; inspect journals, safe source restoration,
-  and reports of potentially partial native activation.
-- Recover a source backup. Then introduce an external edit; recovery must refuse
-  to overwrite it.
-- Roll back using the previous native generation and a selected generation.
-  Verify runtime/profile changes and that configuration.nix is unchanged.
-- Update actual root channels and a flake lock; verify backups and review the
-  resulting candidate before activation.
-- Run as an unprivileged user; denied writes must fail without escalation.
-- Confirm exactly three optional `TODO(USER)` exercises remain.
+```sh
+nix develop --command env ACENIX_NIX_TESTS=1 pytest -m nix
+nix flake check --no-build
+nix build .#checks.x86_64-linux.package --print-build-logs
+```
+
+Native tests require a working Nix installation and `NIX_PATH` pointing at real
+Nixpkgs. They check conventional and locked-flake configurations, imported and
+expanded modules, user-declared options, quoted dynamic attributes, scalar/list/
+attribute-set/path values, enums, defaults, priorities, read-only options, native
+assertions and package ownership. Skipped native tests do not count as validation.
+Evaluate both advertised package architectures; evaluation alone is not an ARM
+build or an ARM boot test.
+
+## Disposable NixOS acceptance
+
+Run the two checks sequentially on machines with limited disk space:
+
+```sh
+nix build .#checks.x86_64-linux.nixos-traditional --no-link --print-build-logs
+nix build .#checks.x86_64-linux.nixos-flake --no-link --print-build-logs
+```
+
+These boot real Linux kernels, use actual GRUB or EFI/systemd-boot installations,
+and install the packaged CLI. They work with QEMU software emulation when KVM is
+unavailable. Allow at least 8 GiB memory and 25 GiB free space for downloaded
+closures and temporary disk images. CI gives each boot test its own runner.
+
+Each machine verifies:
+
+- Applying source that already matches the rules still performs requested activation.
+- An uncached system builder executes inside the guest and produces a real marker.
+- Preview identifies imported source edits and validates the complete candidate.
+- Build mode preserves source files, the running system and the system profile.
+- Test mode changes hostname, packages and the live SSH service without changing
+  the boot profile. Service status agrees with systemd.
+- Boot after test works even when native sources already match. Generation
+  inspection identifies the boot default; reboot selects that system.
+- Switch changes runtime/profile, removes an owned package, and preserves Vim
+  and user comments.
+- Native rollback selects an existing generation and leaves native source alone.
+- Source recovery restores checked files and package ownership without activation.
+- A genuinely failing builder cannot commit source or change runtime/profile.
+- External edits after preview are refused; unprivileged operations fail without
+  automatically escalating permissions.
+- Profile activation changes the actual system and records the active profile.
+- Doctor inspects the resulting system successfully.
+- Native channel/locked-flake updates use their real mechanisms without activation.
+
+Unit fault injection additionally covers cancellation after build, external edits
+while building/committing, activation and post-activation recording failures,
+interruption journals, permissions, corrupt backups and recovery conflicts. These
+checks complement real boot tests; mocked activation is not boot evidence.
+
+The VM fixture prebuilds ordinary expected generation closures so it can operate
+without Internet access. It also retains direct build inputs, including copied
+activation scripts, rather than the full compiler/bootstrap source graph. The
+uncached success/failure builders still execute in the guest.
+
+## Release bookkeeping
+
+Keep `pyproject.toml`, `package.nix`, `acenix.__version__` and the CLI version test
+consistent. Record exact test results in [IMPLEMENTATION.md](IMPLEMENTATION.md).
+Build and install the final version's artifacts, retain exactly three noncritical
+`TODO(USER)` exercises, and review the clean Git diff before publishing separately.
+A local run of the same jobs does not mean GitHub Actions has executed them.
 
 ## Optional asset
 
-The original AceNix ASCII Fastfetch logo is not in the checkout. The PNG is not a
-substitute. Supply that original text asset and verify Fastfetch rendering with
-its normal information modules before including a bundled-logo feature in a
-release. Backup/restore and JSONC preservation are tested with fixture text only.
+The original AceNix ASCII Fastfetch logo is absent. The PNG is not a substitute.
+Fastfetch backup/restore and preservation of JSONC and ordinary modules are
+covered with fixture text. Enable accepts the original text through `--logo`;
+verify its rendering before bundling that asset. Do not invent a replacement.
