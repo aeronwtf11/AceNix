@@ -86,7 +86,7 @@ def test_changed_secret_is_counted_without_disclosing_values():
     assert "Changes" in text and public["change_count"] == 1
 
 
-def test_output_covers_status_options_profiles_and_staging():
+def test_output_covers_status_options_profiles_and_staging(monkeypatch):
     text = human(
         {
             "hostname": "configured",
@@ -105,6 +105,11 @@ def test_output_covers_status_options_profiles_and_staging():
     assert "System Overview" in text and "KDE Plasma" in text
     assert "Saved rules" in text and "Configured and running hostnames differ" in text
     assert "Healthy" not in text  # Status does not run diagnostics.
+    monkeypatch.setattr(
+        "acenix.presentation.display_key",
+        lambda key: "Computer name" if key == "Hostname" else key,
+    )
+    assert "Computer name" in human({"Hostname": "test-host"})
     info = {
         "name": "services.openssh.enable",
         "typeDescription": "boolean",

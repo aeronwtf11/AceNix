@@ -118,7 +118,7 @@ class Terminal:
                 )
 
     def pairs(self, rows):
-        rows = [(clean(key), readable(value)) for key, value in rows]
+        rows = [(clean(display_key(key)), readable(value)) for key, value in rows]
         width = min(
             max((len(key) for key, _ in rows), default=0), max(8, self.width // 3)
         )
@@ -641,7 +641,7 @@ def human(
         if isinstance(value, dict):
             terminal.pairs(
                 [
-                    (display_key(key), format_time(item) if key == "time" else item)
+                    (key, format_time(item) if key == "time" else item)
                     for key, item in value.items()
                 ]
             )
