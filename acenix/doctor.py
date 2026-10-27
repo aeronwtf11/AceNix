@@ -39,7 +39,9 @@ def diagnose(args, store, progress=None):
     record(
         "rule document",
         lambda: {
-            "rules": len(load(args.rules)),
+            "rules": len(
+                load(args.rules, required=getattr(args, "rules_explicit", False))
+            ),
             "file": str(args.rules),
             "exists": args.rules.exists(),
         },
@@ -105,7 +107,10 @@ def diagnose(args, store, progress=None):
     record("managed state", store.read)
 
     def pending():
-        plan = Engine(backend).plan(load(args.rules), store.read())
+        plan = Engine(backend).plan(
+            load(args.rules, required=getattr(args, "rules_explicit", False)),
+            store.read(),
+        )
         return {
             "files": list(plan.changes),
             "high_impact": plan.high_impact,

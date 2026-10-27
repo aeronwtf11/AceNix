@@ -180,7 +180,20 @@ class Terminal:
 
 def preview(terminal, value, details=False):
     terminal.heading("Configuration Preview")
-    terminal.pairs([("Target", value["target"])])
+    context = [("Target", value["target"])]
+    if value.get("rules_file"):
+        context.append(
+            (
+                "Rules file",
+                value["rules_file"]
+                + (
+                    " (not created; no saved requests)"
+                    if value.get("rules_file_exists") is False
+                    else ""
+                ),
+            )
+        )
+    terminal.pairs(context)
     changed = [
         row
         for row in value["values"]

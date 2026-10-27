@@ -308,6 +308,11 @@ def dispatch(args):
         return diagnose(args, store, progress=progress)
     if command == "help":
         parser().parse_args(args.topic + ["--help"])
+    reads_rules = command in {"preview", "apply"} or (
+        command == "get" and not args.option
+    )
+    if reads_rules and args.rules_explicit:
+        rules.require_document(args.rules)
     if command == "history":
         return store.read("history.json", [])
     if command == "setr:fastfetch":
@@ -484,6 +489,8 @@ def dispatch(args):
                 plan = Engine(backend).plan(
                     rules.load(args.rules), store.read(), digest(text.encode())
                 )
+                plan.rules_file = str(args.rules.absolute())
+                plan.rules_file_exists = args.rules.is_file()
                 result = transactions.apply(
                     plan, mode=args.mode, confirm=authorization, rules_path=args.rules
                 )
@@ -506,11 +513,18 @@ def dispatch(args):
                 store.write("state.json", state)
             return {**result, "profile": args.name}
         if command in {"preview", "apply"}:
-            data = args.rules.read_bytes() if args.rules.exists() else b""
+            progress(f"Reading rules from {args.rules.absolute()}")
+            data = (
+                args.rules.read_bytes()
+                if args.rules_explicit or args.rules.exists()
+                else b""
+            )
             progress("Validating configuration")
             plan = Engine(backend).plan(
                 rules.parse(data.decode(), str(args.rules)), store.read(), digest(data)
             )
+            plan.rules_file = str(args.rules.absolute())
+            plan.rules_file_exists = args.rules.is_file()
             if command == "preview":
                 return transactions.preview(plan)
             return transactions.apply(

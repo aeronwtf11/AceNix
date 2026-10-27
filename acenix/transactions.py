@@ -66,9 +66,10 @@ class Transactions:
             self.backend.run(
                 ["nix-instantiate", "--parse", str(target.root / relative)]
             )
+        wanted = [*plan.packages["add"], *plan.packages["already_present"]]
         verified = candidate.verification_data(
             [row["option"] for row in plan.values],
-            [*plan.packages["add"], *plan.packages["remove"]],
+            [*wanted, *plan.packages["remove"]],
             include_packages=any(plan.packages.values()),
         )
         for row in plan.values:
@@ -82,10 +83,13 @@ class Transactions:
         plan.warnings.extend(verified["warnings"])
         current = verified["installed"]
         installed = {p.get("storePath") for p in current if isinstance(p, dict)}
-        for attr in plan.packages["add"]:
+        for attr in wanted:
             if verified["packages"][attr]["storePath"] not in installed:
                 raise ConflictError(
-                    f"{attr} was not included by the candidate module imports."
+                    f"{attr} was not included by the candidate module imports, although you requested it. "
+                    "Another staged setting or native module may exclude it. "
+                    "Adjust the conflicting setting or package definition and run preview again. "
+                    "No native files were written."
                 )
         for attr in plan.packages["remove"]:
             if verified["packages"][attr]["storePath"] in installed:

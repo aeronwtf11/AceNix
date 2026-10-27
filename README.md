@@ -155,6 +155,12 @@ Replace `/home/aaron` with your home directory. If the existing file has not yet
 been migrated, use its actual `config.sys` path instead. These commands do not
 copy user-owned history or package-ownership state into administrator state.
 
+`preview`, `apply`, and `get` without an option reject a missing explicit
+`--rules` path; keep using the existing `config.sys` filename until migration
+creates `config.ace`, or create a new document through staging. `preview` and
+`apply` show the selected document, with `(not created; no saved requests)` for
+an absent default, and never import another account's rules or state automatically.
+
 The original beginner-friendly format remains valid:
 
 ```ini

@@ -278,8 +278,29 @@ def parse(text: str, source="<rules>") -> list[Rule]:
     return rules
 
 
-def load(path: Path):
-    return parse(path.read_text(encoding="utf-8") if path.exists() else "", str(path))
+def require_document(path: Path):
+    if not path.is_file():
+        alternatives = [
+            path.with_name(name)
+            for name in ("config.ace", "config.sys")
+            if name != path.name and path.with_name(name).is_file()
+        ]
+        hint = (
+            f" An existing rule document is available at {alternatives[0]}; select it with --rules."
+            if alternatives
+            else " Select an existing rule document with --rules, or omit --rules to use your account's default."
+        )
+        raise ValidationError(
+            f"Rule document not found: {path}.{hint} No changes were applied."
+        )
+
+
+def load(path: Path, *, required=False):
+    if required:
+        require_document(path)
+    return parse(
+        path.read_text(encoding="utf-8") if required or path.exists() else "", str(path)
+    )
 
 
 def update(text: str, key: str, value, section="options") -> str:

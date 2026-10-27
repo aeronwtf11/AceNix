@@ -164,6 +164,8 @@ class Plan:
     evaluated: bool = False
     derivation: str | None = None
     activation: dict | None = None
+    rules_file: str | None = None
+    rules_file_exists: bool | None = None
 
     def public(self):
         sensitive = lambda path: bool(
@@ -195,6 +197,8 @@ class Plan:
             changes.append({"file": name, "diff": diff})
         return {
             "target": self.target,
+            "rules_file": self.rules_file,
+            "rules_file_exists": self.rules_file_exists,
             "values": values,
             "files": changes,
             "packages": self.packages,
