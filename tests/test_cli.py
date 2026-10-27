@@ -60,13 +60,26 @@ def test_completion(shell, capsys):
     assert "acenix" in capsys.readouterr().out
 
 
-def test_high_impact_requires_explicit_authorization():
+def test_confirmation_is_explicit_and_keeps_json_stdout_clean(monkeypatch, capsys):
     from acenix.cli import confirm
     from acenix.errors import Cancelled
 
     args = parser().parse_args(["apply", "--yes"])
     with pytest.raises(Cancelled):
         confirm(args, {"high_impact": ["networking.hostName"]}, "switch")
+    args = parser().parse_args(["apply", "--json"])
+    monkeypatch.setattr("acenix.cli.sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda: "APPLY")
+    confirm(args, {"high_impact": []}, "switch")
+    output = capsys.readouterr()
+    assert output.out == "" and "Type APPLY" in output.err
+
+    def eof():
+        raise EOFError()
+
+    monkeypatch.setattr("builtins.input", eof)
+    with pytest.raises(Cancelled, match="not authorized"):
+        confirm(args, {"high_impact": []}, "switch")
 
 
 def test_profile_stage_changes_rules_without_native_edits(tmp_path, capsys):

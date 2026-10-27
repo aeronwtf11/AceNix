@@ -196,7 +196,15 @@ def confirm(args, summary, action):
             "No activation authorized. Run interactively or provide --yes (and --allow-high-impact when required)."
         )
     phrase = "APPLY HIGH IMPACT" if impact else "APPLY"
-    if input(f"Type {phrase} to authorize {action}: ").strip() != phrase:
+    # Keep stdout machine-readable even when --json is used interactively.
+    print(f"Type {phrase} to authorize {action}: ", file=sys.stderr, end="", flush=True)
+    try:
+        answer = input()
+    except EOFError as error:
+        raise Cancelled(
+            "Operation cancelled; activation was not authorized."
+        ) from error
+    if answer.strip() != phrase:
         raise Cancelled("Operation cancelled; activation was not authorized.")
 
 
