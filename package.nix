@@ -8,7 +8,12 @@ python3Packages.buildPythonApplication {
     filter = path: type:
       let name = baseNameOf path;
       in lib.cleanSourceFilter path type
-        && !(builtins.elem name [ "build" "dist" ".venv" ".pytest_cache" ".ruff_cache" "__pycache__" ])
+        && !(builtins.elem name [
+          "build" "dist" ".venv" ".pytest_cache" ".ruff_cache" "__pycache__"
+          # Keep release notes and VM definitions outside the application input.
+          # Documentation-only changes must not rebuild every guest generation.
+          "docs" ".github" "scripts" "nix" "flake.nix" "flake.lock"
+        ])
         && !(lib.hasSuffix ".egg-info" name)
         && !(lib.hasSuffix ".pyc" name);
   };

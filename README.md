@@ -135,7 +135,8 @@ refused. The candidate's actual evaluated value must equal the requested value;
 priority/import conflicts cannot silently override it. NixOS warnings are shown.
 
 The source editor supports literal module attribute sets, `{ ... }: { ... }`
-functions, dotted/nested definitions, scalar/list/attribute-set literals, and
+functions, expanded modules with separate `options` and `config` blocks,
+dotted/nested definitions, quoted attribute components, scalar/list/attribute-set literals, and
 simple package lists (`[ pkgs.git ]` or `with pkgs; [ git ]`). It preserves
 surrounding comments and bytes. It refuses computed module bodies, dynamic
 attribute names, interpolation, `mkForce`/`mkDefault` value wrappers, multiple
@@ -160,15 +161,17 @@ acenix service status ssh
 ```
 
 Package attributes resolve against the target's evaluated `pkgs`, including
-overlays and nested attributes. Search lists matching top-level attributes;
+overlays and nested attributes. Search uses Nix's recursive package search;
 `info` checks installability, platform availability and broken status. Installed
 package identity uses real store paths. Only expressions AceNix added may be
 removed. Packages declared elsewhere are preserved, including shared package
 definitions. An option module must already provide `pkgs` in its function arguments.
 
-`update` updates a locked flake or channels for the invoking user; it does not
+`update` updates a locked flake or the registered channel supplying the target's
+Nixpkgs; it does not
 activate a new system. Flake lockfiles are backed up. Channel updates must run as
-the account whose channels the NixOS target uses, normally root. Review their
+the account whose channels the NixOS target uses, normally root. A pinned custom
+source requires its own explicit update; unrelated channels are left alone. Review their
 effects with preview and apply afterward.
 
 Service aliases include ssh/sshd, printing and bluetooth; other service names
@@ -217,8 +220,8 @@ restores checked configuration backups; it never changes the running system.
 Rollback uses existing NixOS generations and never rewrites configuration.nix.
 No generations or backups are deleted automatically. Generation inspection
 distinguishes running, booted and profile-default systems. Next-boot defaults
-are reported when systemd-boot identifies the generation; other bootloaders may
-have an unknown boot default rather than an inferred one.
+are read from systemd-boot metadata or supported GRUB numeric, named, saved and
+one-time entries. An unidentifiable default is reported as unknown.
 
 The transaction journal survives interruption. On a failed commit/activation,
 AceNix attempts safe source restoration and preserves recovery information.
@@ -244,8 +247,12 @@ ACENIX_NIX_TESTS=1 .venv/bin/pytest -m nix
 ```
 
 `nix develop` supplies the Python test environment and native tools. CI runs
-Python tests and packaging, plus real NixOS evaluation with conventional and
-locked-flake fixtures. Tests never activate the developer's host. See
+Python tests and packaging, real NixOS evaluation, and disposable GRUB/channel
+and EFI/flake machines that build, activate, reboot, recover and roll back.
+`scripts/check-python.sh` reproduces the Python 3.11–3.13 jobs using Docker;
+`nix build .#checks.x86_64-linux.nixos-traditional` and the `nixos-flake` check
+run real boot tests (software emulation also works without KVM).
+Tests never activate the developer's host. See
 [architecture](docs/ARCHITECTURE.md) and [release verification](docs/RELEASING.md).
 
 Your original root `main.py` remains a compatibility entry point; no arguments

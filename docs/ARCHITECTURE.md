@@ -66,4 +66,5 @@ The generic backend handles static options and attrsOf submodule children. It
 does not claim to rewrite arbitrary functions, modules, dynamic keys, priorities,
 or executable option values. List-index option addressing, remote target
 activation, remote flake checkout management, arbitrary flake output schemas,
-and bootloader-specific default discovery beyond systemd-boot are unsupported.
+and bootloader-specific default discovery beyond supported systemd-boot/GRUB
+metadata are unsupported.
