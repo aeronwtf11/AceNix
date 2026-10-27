@@ -13,7 +13,8 @@ let
   hardware = builtins.toFile "hardware-configuration.nix" ''
     { ... }: {
       boot.initrd.availableKernelModules = [ "virtio_pci" "virtio_blk" "virtio_scsi" "ahci" "sd_mod" ];
-      fileSystems."/" = { device = "/dev/disk/by-label/nixos"; fsType = "ext4"; };
+      boot.growPartition = true;
+      fileSystems."/" = { device = "/dev/disk/by-label/nixos"; fsType = "ext4"; autoResize = true; };
       ${lib.optionalString efi ''
         fileSystems."/boot" = { device = "/dev/disk/by-label/ESP"; fsType = "vfat"; };
       ''}
@@ -136,6 +137,8 @@ pkgs.testers.runNixOSTest {
     boot.loader.grub.enable = lib.mkForce (!efi);
     boot.loader.systemd-boot.enable = lib.mkForce efi;
     boot.loader.efi.canTouchEfiVariables = efi;
+    boot.growPartition = true;
+    fileSystems."/".autoResize = true;
     documentation.enable = lib.mkForce false;
     documentation.nixos.enable = lib.mkForce false;
     hardware.firmware = lib.mkForce [ ];
@@ -163,6 +166,7 @@ pkgs.testers.runNixOSTest {
       useBootLoader = true;
       useEFIBoot = efi;
       writableStore = true;
+      writableStoreUseTmpfs = false;
     };
   };
   testScript = ''
@@ -172,6 +176,7 @@ pkgs.testers.runNixOSTest {
     machine.start()
     machine.wait_for_unit("multi-user.target")
     machine.succeed("udevadm settle")
+    machine.succeed("df -h /; df -i /")
     machine.copy_from_host("${hardware}", "/etc/nixos/hardware-configuration.nix")
     machine.copy_from_host("${configuration}", "/etc/nixos/configuration.nix")
     machine.copy_from_host("${serviceModule}", "/etc/nixos/services.nix")
