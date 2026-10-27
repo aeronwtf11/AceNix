@@ -51,6 +51,7 @@ def test_preview_explains_changes_without_default_diff(plan):
     assert "+ hardware.bluetooth.enable: Disabled -> Enabled" in text
     assert "+ Install: firefox" in text and "- Remove: hello" in text
     assert "Already installed: vim" in text and "2 staged settings/packages" in text
+    assert "ALREADY MATCHES" in text and "= services.openssh.enable: Disabled" in text
     assert "High impact" in text and "Rebuild" in text and "Reboot" in text
     assert "Successful" in text and "Next step: acenix apply" in text
     assert "@@" not in text and "--- old" not in text
@@ -113,6 +114,10 @@ def test_output_covers_status_options_profiles_and_staging():
     }
     text = human(info, "options", "info")
     assert "DESCRIPTION" in text and "remote logins" in text and "\\n" not in text
+    info["default"] = None
+    assert "Not set" in human(info, "options", "info")
+    info["default"] = {"unavailable": True}
+    assert "Unavailable" in human(info, "options", "info")
     assert "No profiles saved" in human([], "profile", "list")
     for command, expected in [
         ("install", "+ Install: firefox"),

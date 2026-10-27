@@ -39,7 +39,7 @@ def clean(value):
 
 def readable(value):
     if value is None:
-        return "Unavailable"
+        return "Not set"
     if value is True:
         return "Enabled"
     if value is False:
@@ -49,6 +49,8 @@ def readable(value):
     if isinstance(value, dict):
         if value == {"__acenixAbsent": True}:
             return "Not defined"
+        if value == {"unavailable": True}:
+            return "Unavailable"
         return (
             "; ".join(f"{key}: {readable(item)}" for key, item in value.items())
             or "None"
@@ -207,6 +209,15 @@ def preview(terminal, value, details=False):
                 f"{marker} {display_key(row['option'])}: {readable(row['current'])} {arrow} {readable(row['requested'])}"
             )
     packages = value["packages"]
+    if unchanged:
+        terminal.section("Already matches")
+        shown = unchanged if terminal.all_rows else unchanged[:5]
+        for row in shown:
+            terminal.text(f"= {display_key(row['option'])}: {readable(row['current'])}")
+        if len(shown) < len(unchanged):
+            terminal.text(
+                f"{len(unchanged) - len(shown)} more unchanged settings. Use --all to show them."
+            )
     if any(packages.values()):
         terminal.section("Packages")
         for key, marker, action in [
@@ -304,11 +315,21 @@ def human(
         terminal.pairs(
             [
                 ("Hostname", value["hostname"]),
-                ("Running hostname", value["runtime_hostname"]),
-                ("NixOS", value.get("nixos_release")),
+                ("Running hostname", value["runtime_hostname"] or "Unavailable"),
+                ("NixOS", value.get("nixos_release") or "Unavailable"),
                 ("Desktop", value.get("desktop") or "No supported desktop enabled"),
-                ("NetworkManager", value.get("network_manager")),
-                ("Bluetooth", value.get("bluetooth")),
+                (
+                    "NetworkManager",
+                    value.get("network_manager")
+                    if value.get("network_manager") is not None
+                    else "Unavailable",
+                ),
+                (
+                    "Bluetooth",
+                    value.get("bluetooth")
+                    if value.get("bluetooth") is not None
+                    else "Unavailable",
+                ),
                 ("Target", value["target"]),
                 ("Saved rules", value["staged_rules"]),
                 (
