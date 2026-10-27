@@ -1,0 +1,5 @@
+[system]
+hostname:ace-pc
+network:true
+desktop:false
+bluetooth:false
