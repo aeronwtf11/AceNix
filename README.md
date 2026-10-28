@@ -427,11 +427,16 @@ The repository contains a PNG, not the original ASCII logo: enable requires that
 asset rather than inventing a replacement. Fastfetch itself must already be
 installed using your normal package mechanism.
 
-## Related projects and license
+## Related projects
 
 **AceNix** is this NixOS management tool. **AceLinux** is the future independent
 Linux distribution. **AceOS** is the future operating system with a custom kernel.
 The rule parser is independent of the NixOS backend to support future reuse.
 
-A license has not been selected. Until the owner adds one, do not assume this
-repository grants permission to reuse or redistribute its code.
+## License
+
+AceNix is free and open-source software
+licensed under the GNU General Public License
+v3.0 or later (GPL-3.0-or-later).
+
+See [LICENSE](LICENSE) for details.
