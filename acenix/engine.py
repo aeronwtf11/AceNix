@@ -166,6 +166,7 @@ class Plan:
     activation: dict | None = None
     rules_file: str | None = None
     rules_file_exists: bool | None = None
+    next_commands: dict | None = None
 
     def public(self):
         sensitive = lambda path: bool(
@@ -199,6 +200,7 @@ class Plan:
             "target": self.target,
             "rules_file": self.rules_file,
             "rules_file_exists": self.rules_file_exists,
+            "next_commands": self.next_commands,
             "values": values,
             "files": changes,
             "packages": self.packages,

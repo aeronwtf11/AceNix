@@ -60,8 +60,8 @@ environment.systemPackages = [ (pkgs.callPackage /path/to/AceNix/package.nix { }
 ```
 
 Run your normal reviewed NixOS rebuild. You can then use `acenix` and
-`sudo -H acenix` from any directory. The first workflow below uses this
-system-wide installation and one administrator account throughout.
+`sudo acenix` from any directory. The first workflow below uses this
+system-wide installation.
 
 An optional flake NixOS module exports `programs.acenix.enable`; import
 `acenix.nixosModules.default` first and set that option to `true`. Use the
@@ -83,15 +83,16 @@ acenix --help
 ## First workflow
 
 ```sh
-sudo -H acenix doctor
-sudo -H acenix setr hostname:ace-pc
-sudo -H acenix setr network:true
-sudo -H acenix enable ssh
-sudo -H acenix install git vim
-sudo -H acenix preview
-sudo -H acenix apply --mode build
-sudo -H acenix apply --mode switch
+acenix install git vim
+acenix enable bluetooth
+sudo acenix preview
+sudo acenix apply
 ```
+
+Save your requests as your normal user, review them, then apply them with
+administrator permissions. Under `sudo`, AceNix automatically selects your
+existing rule document, including a legacy `config.sys`; no `--rules` argument
+is needed for this workflow. Preview and apply display the selected file.
 
 `set`, `setr`, `install`, `remove`, `enable` and `disable` stage rules. **They do
 not activate or immediately rewrite configuration.nix.** `preview` evaluates an
@@ -102,6 +103,8 @@ the full native file changes. Apply builds that candidate first.
 `switch` commit the reviewed source files and invoke native activation, with
 explicit confirmation. Boot/network/authentication changes need an additional
 high-impact acknowledgment. Automation can use `--yes --allow-high-impact`.
+Use `sudo acenix doctor` for diagnostics or `sudo acenix apply --mode build`
+to build the candidate without activating it.
 
 Native activation can leave settings pending until reboot. For example, NixOS
 can update `/etc/hostname` while the kernel retains its previous hostname.
@@ -112,12 +115,12 @@ it does not imply that every boot-time setting changed immediately.
 
 AceNix never invokes sudo. Staging, inspection and candidate builds can run as
 an ordinary user. Source commits and activation need administrator permissions.
-For administration, use the same administrator account and its private state
-throughout staging, preview and apply. An administrator cannot reuse state owned
-by an ordinary user. Explicit absolute `--rules` and `--state` paths avoid changes
-to the XDG defaults between shells. Keep state private (mode 0700) and owned by
-the account performing the operation. Do not share a writable administrator
-state directory.
+When you run `sudo acenix`, the selected user rule document is read while
+administrator history, backups and package-ownership records stay in root's
+private state. User-owned state is never copied into it. Use `sudo acenix preview`
+for the complete administration preview: an ordinary user's preview cannot read
+root's package-ownership records after an administrator apply. State directories
+remain private (mode 0700) and owned by the account performing the operation.
 
 Global location options go **before** the command:
 
@@ -143,23 +146,51 @@ The next staging command writes `config.ace` and retains the original
 commands, including `preview` and `doctor`, do not migrate files, and an explicit
 `--rules /path/config.sys` continues using that exact path.
 
-Your user and root have separate defaults. To apply rules staged by your user,
-select that same document explicitly while keeping administrator state private:
-
-```sh
-sudo -H acenix --rules /home/aaron/.config/acenix/config.ace preview
-sudo -H acenix --rules /home/aaron/.config/acenix/config.ace apply
-```
-
-Replace `/home/aaron` with your home directory. If the existing file has not yet
-been migrated, use its actual `config.sys` path instead. These commands do not
-copy user-owned history or package-ownership state into administrator state.
+With a validated sudo caller, an existing caller-owned rule document is selected
+automatically. This applies to commands that read or stage rules, and works with
+both `sudo acenix` and `sudo -H acenix`. If the caller has no existing document,
+sudo uses root's document; a genuine root login also keeps root's defaults.
+Administrator state stays private in root's own home directory, normally
+`/root/.local/state/acenix`.
 
 `preview`, `apply`, and `get` without an option reject a missing explicit
 `--rules` path; keep using the existing `config.sys` filename until migration
 creates `config.ace`, or create a new document through staging. `preview` and
 `apply` show the selected document, with `(not created; no saved requests)` for
-an absent default, and never import another account's rules or state automatically.
+an absent default.
+
+<details>
+<summary>Advanced: custom locations and separate administrator rules</summary>
+
+`--rules` and `--state` remain explicit choices and take precedence over default
+selection. An explicit `--rules` path continues using that exact filename.
+State still requires private permissions and ownership by the current account;
+selecting another rule document does not transfer its owner's private state.
+
+An inherited custom `XDG_CONFIG_HOME` can preserve the caller's existing rule
+document. If sudo removes that variable, AceNix cannot guess the custom path;
+use `--rules /actual/path/config.ace` instead. An existing root-owned document
+in a custom `XDG_CONFIG_HOME` outside the caller's home remains selected.
+
+To maintain a separate root document intentionally, select it while staging,
+reviewing and applying:
+
+```sh
+sudo acenix --rules /root/.config/acenix/config.ace install git
+sudo acenix --rules /root/.config/acenix/config.ace preview
+sudo acenix --rules /root/.config/acenix/config.ace apply
+```
+
+If `sudo` cannot find a CLI installed only in your user profile, prefer the
+system-wide installation above. You can also select the installed executable
+explicitly:
+
+```sh
+sudo "$(command -v acenix)" preview
+sudo "$(command -v acenix)" apply
+```
+
+</details>
 
 The original beginner-friendly format remains valid:
 
@@ -270,7 +301,8 @@ acenix profile show development
 acenix profile export development /path/development.sys
 acenix profile import gaming /path/gaming.sys
 acenix profile activate gaming --stage
-acenix profile activate gaming --mode switch
+sudo acenix preview
+sudo acenix apply
 acenix profile delete gaming
 acenix generations
 acenix history
@@ -284,6 +316,10 @@ preview/confirmation, backup and apply transaction. Profiles are explicit
 configuration overlays: settings omitted from the next profile are left alone,
 not deleted or reset implicitly. Set an explicit value to change them. Native
 system generations remain available independently of profiles.
+
+For direct administrator profile activation, use `sudo acenix profile create NAME`
+and `sudo acenix profile activate NAME --mode switch`; the administrator's private
+profile catalogue is separate, and user profiles are not copied into it.
 
 **Source recovery and native system rollback are different operations.** Recover
 restores checked configuration backups; it never changes the running system.

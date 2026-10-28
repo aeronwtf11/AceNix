@@ -65,8 +65,32 @@ reported explicitly. The app never silently escalates privileges.
 
 Packages are NixOS `environment.systemPackages` definitions. Only owned
 expressions are removable; external list items and expressions are retained.
-Ownership, history, profiles and backup journals use private XDG state.
+Ownership, history, profiles and backup journals use private per-account state.
 Profile documents are explicit overlays, not wholesale ownership of the machine.
+
+Rule selection and transaction-state ownership are separate. An ordinary user
+stages into their own rule document. Under a validated sudo caller identity,
+commands that use rules select an existing caller-owned `config.ace` or legacy
+`config.sys` automatically; `sudo` and `sudo -H` therefore support the same
+stage-as-user, preview-and-apply-as-administrator workflow. Caller identity and
+file ownership are checked before choosing that document. If no caller document
+exists, sudo retains root's rule defaults; genuine root sessions also retain
+their own defaults. No command elevates privileges or activates changes merely
+because a caller document was selected.
+
+Sudo transaction state defaults to the canonical root home from the account
+database, rather than an inherited caller home or XDG state directory. It remains
+root-owned and private; user history, profiles, ownership records and journals
+are not imported. Ordinary user previews cannot use root's package-ownership
+records; run `sudo acenix preview` for the complete administrative plan. Explicit
+`--rules` and `--state` selections keep their existing validation and precedence.
+
+Existing caller rule documents in an inherited custom `XDG_CONFIG_HOME` are
+supported. A custom caller location stripped from the sudo environment cannot
+be inferred and requires explicit `--rules`. An existing root-owned document
+in a custom XDG configuration directory outside the caller's home is retained
+as an administrator selection. Choosing rules never relaxes state-directory
+permissions or transfers state between accounts.
 
 No subprocess uses `shell=True`. CLI values are JSON data or explicitly typed
 paths, and all Nix strings escape interpolation. Commands use argument vectors;

@@ -301,7 +301,8 @@ def preview(terminal, value, details=False):
     terminal.text(
         "Review this plan before authorizing activation."
         if value.get("activation")
-        else "Next step: acenix apply"
+        else "Next step: "
+        + (value.get("next_commands") or {}).get("apply", "acenix apply")
         if count
         else "Staged values already match the evaluated configuration. Apply can still rebuild or synchronize runtime/boot state."
     )
@@ -563,7 +564,12 @@ def human(
             "exported": "Profile exported successfully.",
             "profile-staged": "Profile rules staged. Review with acenix preview, then acenix apply.",
         }
-        terminal.text(messages[value["result"]])
+        commands = value.get("next_commands")
+        terminal.text(
+            f"Profile rules staged. Review with {commands['preview']}, then {commands['apply']}."
+            if value["result"] == "profile-staged" and commands
+            else messages[value["result"]]
+        )
         terminal.pairs(
             [
                 (key.capitalize(), value[key])
@@ -620,7 +626,11 @@ def human(
         terminal.text(
             "Saved to your rule document. Native configuration and the running system are unchanged."
         )
-        terminal.text("Next step: acenix preview, then acenix apply.")
+        commands = value.get("next_commands") or {
+            "preview": "acenix preview",
+            "apply": "acenix apply",
+        }
+        terminal.text(f"Next step: {commands['preview']}, then {commands['apply']}.")
     elif isinstance(value, dict) and value.get("result") in {"built", "activated"}:
         terminal.heading(
             "Build Complete" if value["result"] == "built" else "Apply Complete"

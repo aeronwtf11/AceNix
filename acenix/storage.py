@@ -30,7 +30,7 @@ def safe_path(path: Path):
     return path
 
 
-def atomic_write(path: Path, data: bytes, *, mode=0o600, expected=None):
+def atomic_write(path: Path, data: bytes, *, mode=0o600, expected=None, owner=None):
     path = safe_path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     current = path.read_bytes() if path.exists() else None
@@ -45,7 +45,9 @@ def atomic_write(path: Path, data: bytes, *, mode=0o600, expected=None):
             os.fchmod(
                 stream.fileno(), stat.S_IMODE(original.st_mode) if original else mode
             )
-            if original and os.geteuid() == 0:
+            if owner is not None:
+                os.fchown(stream.fileno(), *owner)
+            elif original and os.geteuid() == 0:
                 os.fchown(stream.fileno(), original.st_uid, original.st_gid)
             os.fsync(stream.fileno())
         if (path.read_bytes() if path.exists() else None) != current:

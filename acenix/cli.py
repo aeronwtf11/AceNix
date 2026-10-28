@@ -6,8 +6,10 @@ import logging
 import os
 from pathlib import Path
 import re
+import shlex
 import sys
 from . import __version__, rules
+from .context import resolve_sudo_defaults
 from .doctor import diagnose
 from .engine import Engine, mapped, service_option
 from .errors import (
@@ -33,6 +35,19 @@ def xdg(name, fallback):
     return Path(os.environ.get(name, Path.home() / fallback))
 
 
+def management_commands(args):
+    uid = os.environ.get("SUDO_UID", "0")
+    from_sudo = len(uid) <= 20 and uid.isascii() and uid.isdecimal() and int(uid) > 0
+    prefix = ["sudo", "acenix"] if os.geteuid() != 0 or from_sudo else ["acenix"]
+    for name in ("config", "flake", "host", "module", "rules", "state"):
+        if name in {"rules", "state"} and not getattr(args, name + "_explicit", False):
+            continue
+        value = getattr(args, name, None)
+        if value is not None:
+            prefix.extend(["--" + name, str(value)])
+    return {command: shlex.join([*prefix, command]) for command in ("preview", "apply")}
+
+
 def default_rules_path():
     directory = xdg("XDG_CONFIG_HOME", ".config") / "acenix"
     current, legacy = directory / "config.ace", directory / "config.sys"
@@ -51,6 +66,12 @@ class RulesPathAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         setattr(namespace, self.dest, values)
         namespace.rules_explicit = True
+
+
+class StatePathAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, values)
+        namespace.state_explicit = True
 
 
 def write_rule_document(args, data, before):
@@ -73,8 +94,15 @@ def write_rule_document(args, data, before):
             raise ConflictError(
                 f"The new rule document appeared while staging: {destination}. Run the command again to use it."
             )
+    owner = None
+    if migrating and os.geteuid() == 0:
+        original = source.stat()
+        owner = (original.st_uid, original.st_gid)
     atomic_write(
-        destination, data, expected=digest(b"" if migrating else previous or b"")
+        destination,
+        data,
+        expected=digest(b"" if migrating else previous or b""),
+        owner=owner,
     )
     if migrating:
         args.rules = destination
@@ -133,8 +161,12 @@ def parser():
     )
     root.set_defaults(rules_explicit=False)
     root.add_argument(
-        "--state", type=Path, default=xdg("XDG_STATE_HOME", ".local/state") / "acenix"
+        "--state",
+        type=Path,
+        action=StatePathAction,
+        default=xdg("XDG_STATE_HOME", ".local/state") / "acenix",
     )
+    root.set_defaults(state_explicit=False)
     output_flags(root)
     commands = root.add_subparsers(dest="command", required=True)
 
@@ -279,6 +311,7 @@ def stage(args, store, updates):
         "staged": [key for key, _, _ in updates],
         "rules": str(args.rules),
         "next": "Run preview, then apply. Native configuration is unchanged.",
+        "next_commands": management_commands(args),
     }
 
 
@@ -483,6 +516,7 @@ def dispatch(args):
                     "profile": args.name,
                     "rules": str(args.rules),
                     "activation_performed": False,
+                    "next_commands": management_commands(args),
                 }
             try:
                 progress("Validating configuration")
@@ -491,6 +525,7 @@ def dispatch(args):
                 )
                 plan.rules_file = str(args.rules.absolute())
                 plan.rules_file_exists = args.rules.is_file()
+                plan.next_commands = management_commands(args)
                 result = transactions.apply(
                     plan, mode=args.mode, confirm=authorization, rules_path=args.rules
                 )
@@ -525,6 +560,7 @@ def dispatch(args):
             )
             plan.rules_file = str(args.rules.absolute())
             plan.rules_file_exists = args.rules.is_file()
+            plan.next_commands = management_commands(args)
             if command == "preview":
                 return transactions.preview(plan)
             return transactions.apply(
@@ -540,6 +576,8 @@ def main(argv=None):
             setattr(args, flag, False)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING)
     try:
+        if args.command not in {"help", "completion"}:
+            resolve_sudo_defaults(args)
         result = dispatch(args)
         if not args.quiet:
             print(
