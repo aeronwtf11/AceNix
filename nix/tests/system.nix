@@ -63,7 +63,7 @@ let
   configuration = builtins.toFile "configuration.nix"
     (render "./hardware-configuration.nix" "./services.nix" "./builder-option.nix" "acenix-before" false);
   serviceModule = builtins.toFile "services.nix" (serviceText false);
-  generation = hostname: ssh: hello:
+  generation = cliEvaluation: hostname: ssh: hello:
     let
       arguments = {
         system = pkgs.stdenv.hostPlatform.system;
@@ -106,7 +106,7 @@ let
           environment.systemPackages = [ (pkgs.callPackage ../../package.nix { }) pkgs.vim ]
             ++ lib.optional hello pkgs.hello;
         }) ];
-      } // lib.optionalAttrs (!flakeMode) {
+      } // lib.optionalAttrs (!flakeMode && cliEvaluation) {
         # AceNix imports eval-config through --expr, whose modules have no
         # source position. Match that here: eval-config's automatic location
         # wrapper otherwise changes list merge order and the cached system path.
@@ -115,11 +115,15 @@ let
     in (if flakeMode then nixosSystem arguments
         else import (nixpkgsPath + "/nixos/lib/eval-config.nix") arguments).config.system.build.toplevel;
   generations = [
-    (generation "acenix-before" false false)
-    (generation "acenix-a" true true)
-    (generation "acenix-b" true false)
-    (generation "acenix-c" true false)
+    (generation true "acenix-before" false false)
+    (generation true "acenix-a" true true)
+    (generation true "acenix-b" true false)
+    (generation true "acenix-c" true false)
   ];
+  # Update delegates to nixos-rebuild, whose file-based evaluator retains the
+  # default module-location wrapper. Keep its final system cached as well.
+  offlineSystems = generations
+    ++ lib.optional (!flakeMode) (generation false "acenix-c" true false);
   # A system copies some build inputs (activation/init scripts), so the runtime
   # closure alone is insufficient for an offline rebuild. Retain the direct
   # output paths in its derivation arguments, including their Nix dependency
@@ -188,7 +192,7 @@ pkgs.testers.runNixOSTest {
       pkgs.kmod pkgs.perl pkgs.nukeReferences pkgs.cpio pkgs.zstd pkgs.gzip
       localChannel
     ] ++ lib.optional flakeMode nixpkgsArchive
-      ++ pkgs.jq.all ++ generations ++ lib.concatMap directBuildInputs generations;
+      ++ pkgs.jq.all ++ offlineSystems ++ lib.concatMap directBuildInputs offlineSystems;
     system.switch.enable = true;
     services.openssh.enable = false;
     networking.hostName = "acenix-before";
