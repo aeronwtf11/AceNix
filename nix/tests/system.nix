@@ -106,6 +106,11 @@ let
           environment.systemPackages = [ (pkgs.callPackage ../../package.nix { }) pkgs.vim ]
             ++ lib.optional hello pkgs.hello;
         }) ];
+      } // lib.optionalAttrs (!flakeMode) {
+        # AceNix imports eval-config through --expr, whose modules have no
+        # source position. Match that here: eval-config's automatic location
+        # wrapper otherwise changes list merge order and the cached system path.
+        modulesLocation = null;
       };
     in (if flakeMode then nixosSystem arguments
         else import (nixpkgsPath + "/nixos/lib/eval-config.nix") arguments).config.system.build.toplevel;
@@ -245,6 +250,10 @@ pkgs.testers.runNixOSTest {
         return machine.succeed("sha256sum /etc/nixos/*.nix").strip()
 
     with subtest("initial source-matching activation installs the actual native configuration"):
+        if ${if flakeMode then "False" else "True"}:
+            preview = command("preview --check")
+            # Compare fingerprints without copying the derivation/source closure.
+            assert preview["derivation"] == "${builtins.unsafeDiscardStringContext ((builtins.head generations).drvPath)}", preview
         result = command("apply --mode switch" + authorization)
         assert result["result"] == "activated", result
         assert machine.succeed("hostname").strip() == "acenix-before"
@@ -264,6 +273,8 @@ pkgs.testers.runNixOSTest {
         command("install hello")
         preview = command("preview --check")
         assert preview["validation"] == "candidate evaluated", preview
+        if ${if flakeMode then "False" else "True"}:
+            assert preview["derivation"] == "${builtins.unsafeDiscardStringContext ((builtins.elemAt generations 1).drvPath)}", preview
         assert any(row["file"] == "services.nix" for row in preview["files"]), preview
         before = sources()
         output = machine.succeed(cli + "apply --mode build --ascii 2>&1")
