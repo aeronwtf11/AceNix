@@ -425,7 +425,12 @@ pkgs.testers.runNixOSTest {
         assert sources() == before and current() == running and profile() == boot_profile
         result = command("update" + authorization)
         assert result["mode"] == "switch" and result["activation_performed"] is True, result
-        assert sources() == before and current() == running and profile() == running
+        # nixos-rebuild's file evaluator can order module defaults differently
+        # from --expr evaluation. Check its actual expected generation rather
+        # than incorrectly requiring the previous runtime store path.
+        expected = "${builtins.unsafeDiscardStringContext ((lib.last offlineSystems).outPath)}"
+        assert sources() == before
+        assert current() == expected and profile() == expected, (current(), profile(), expected)
         assert machine.succeed("sha256sum /root/acenix.sys").strip() == staged
         assert machine.succeed("cat /etc/hostname").strip() == "acenix-c"
         assert result["staged_rules_applied"] is False, result
