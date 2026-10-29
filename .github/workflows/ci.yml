@@ -29,6 +29,31 @@ jobs:
       - uses: cachix/install-nix-action@d9186cbdca7adedf113a159fa91f725a27866771
       - run: nix flake check --no-build --all-systems
       # Give each real boot test its own disk and memory budget.
-      - run: nix build .#checks.x86_64-linux.${{ matrix.check }} --no-link --print-build-logs --max-jobs 2 --cores 2
+      - name: Build native Nix check
+        shell: bash
+        run: |
+          nix build .#checks.x86_64-linux.${{ matrix.check }} --no-link --print-build-logs --max-jobs 2 --cores 2 2>&1 | tee "$RUNNER_TEMP/acenix-nix-build.log"
       - if: matrix.check == 'package'
-        run: nix develop --command env ACENIX_NIX_TESTS=1 pytest -m nix
+        name: Test native CLI integration
+        shell: bash
+        run: |
+          nix develop --command env ACENIX_NIX_TESTS=1 pytest -m nix 2>&1 | tee "$RUNNER_TEMP/acenix-native-tests.log"
+      - name: Summarize native failures
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          from collections import deque
+          import os
+          from pathlib import Path
+
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          temporary = Path(os.environ["RUNNER_TEMP"])
+          with summary.open("a") as output:
+              for name in ("acenix-nix-build.log", "acenix-native-tests.log"):
+                  path = temporary / name
+                  if not path.is_file():
+                      continue
+                  with path.open(errors="replace") as stream:
+                      tail = "".join(deque(stream, maxlen=120))
+                  output.write(f"### {name}\n\n````text\n{tail}\n````\n\n")
+          PY

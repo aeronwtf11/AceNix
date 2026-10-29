@@ -104,6 +104,16 @@ def test_cli_real_flake_refresh_precedes_isolated_rebuild_boundary(
         f"raise SystemExit({exit_code})\n"
     )
     executable.chmod(0o755)
+    # The Nix package intentionally prefixes PATH with its native dependencies.
+    # For this controlled rebuild boundary, launch the registered console entry
+    # point directly so our test command takes precedence. The inputs-only test
+    # above still exercises the installed (and possibly Nix-wrapped) executable.
+    console = binaries / "acenix"
+    console.write_text(
+        f"#!{sys.executable}\nfrom acenix.cli import main\nraise SystemExit(main())\n"
+    )
+    console.chmod(0o755)
+    command = [str(console), *command[1:]]
     monkeypatch.setenv("PATH", str(binaries) + os.pathsep + os.environ["PATH"])
     result = subprocess.run(
         command + ["--mode", "build"], capture_output=True, text=True, timeout=120
