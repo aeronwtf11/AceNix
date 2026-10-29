@@ -216,6 +216,9 @@ pkgs.testers.runNixOSTest {
     machine.copy_from_host("${serviceModule}", "/etc/nixos/services.nix")
     machine.copy_from_host("${builderOption}", "/etc/nixos/builder-option.nix")
     machine.succeed("chmod 644 /etc/nixos/*.nix")
+    # The initial source-matching apply deliberately has no staged requests.
+    # An explicit --rules path must still refer to a real document.
+    machine.succeed("install -m 600 /dev/null /root/acenix.sys")
     ${lib.optionalString flakeMode ''
       machine.copy_from_host("${localFlake}", "/etc/nixos/flake.nix")
       machine.succeed("nix flake lock --offline path:/etc/nixos")

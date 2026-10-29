@@ -255,6 +255,43 @@ def test_preview_changes_actual_imported_file_and_leaves_sources_unchanged(nativ
     assert backend.get("services.openssh.enable") is False
 
 
+def test_existing_empty_explicit_rules_allow_full_native_preview(native, tmp_path):
+    import json
+    import shutil
+    import subprocess
+
+    backend, store = native
+    document = tmp_path / "empty.ace"
+    document.write_text("")
+    before = backend.target.config.read_bytes()
+    executable = shutil.which("acenix")
+    assert executable, "Install the standalone CLI before functional tests"
+    result = subprocess.run(
+        [
+            executable,
+            "--config",
+            str(backend.target.config),
+            "--rules",
+            str(document),
+            "--state",
+            str(store.root),
+            "preview",
+            "--check",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["validation"] == "candidate evaluated"
+    assert data["rules_file_exists"] is True
+    assert data["files"] == [] and data["values"] == []
+    assert data["change_count"] == 0
+    assert document.read_text() == "" and backend.target.config.read_bytes() == before
+
+
 def test_real_package_add_remove_ownership(native):
     backend, store = native
     plan = Engine(backend).plan(parse("pkg.hello:true"), {})
