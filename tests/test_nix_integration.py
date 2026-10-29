@@ -464,3 +464,134 @@ def test_real_module_assertion_blocks_candidate(native):
     with pytest.raises(ToolError, match="ACENIX_EXPECTED_ASSERTION"):
         Transactions(backend, store).preview(plan)
     assert backend.target.config.read_bytes() == original
+
+
+def test_standalone_native_commands_write_modules_and_ignore_old_rules(
+    native, tmp_path
+):
+    import json
+    import shutil
+    import subprocess
+
+    backend, store = native
+    executable = shutil.which("acenix")
+    assert executable
+    old = tmp_path / "old-config/acenix/config.ace"
+    old.parent.mkdir(parents=True)
+    old.write_text("hostname:WRONG-OLD-REQUEST\npkg.not-a-real-package:true\n")
+    environment = {**os.environ, "XDG_CONFIG_HOME": str(old.parent.parent)}
+    flags = [
+        executable,
+        "--config",
+        str(backend.target.config),
+        "--state",
+        str(store.root),
+    ]
+
+    def cli(*arguments):
+        result = subprocess.run(
+            [*flags, *arguments, "--json"],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+
+    original = backend.target.config.read_bytes()
+    result = cli("install", "hello")
+    assert (
+        result["result"] == "native-edited" and result["activation_performed"] is False
+    )
+    assert backend.target.config.read_bytes() != original
+    assert "pkgs.hello" in backend.target.config.read_text()
+    cli("enable", "ssh")
+    assert "# Preserve me." in (backend.target.root / "services.nix").read_text()
+    assert backend.get("services.openssh.enable") is True
+    preview = cli("preview")
+    assert preview["workflow"] == "native" and preview["rules_file"] is None
+    assert preview["packages"]["add"] == ["hello"]
+    assert any(
+        row["option"] == "services.openssh.enable" and row["requested"] is True
+        for row in preview["values"]
+    )
+    assert len(preview["files"]) == 2
+    assert (
+        preview["validation"] == "candidate values evaluated"
+        and preview["derivation"] is None
+    )
+    assert cli("preview", "--check")["validation"] == "candidate evaluated"
+    cli("profile", "create", "native-snapshot")
+    cli("setr", "hostname:native-after")
+    assert backend.get("networking.hostName") == "native-after"
+    cli("profile", "activate", "native-snapshot", "--stage")
+    # The reusable profile captures tracked native options; unrelated options stay intact.
+    assert backend.get("services.openssh.enable") is True
+    cli("remove", "hello")
+    assert backend.get("environment.systemPackages")
+    assert "pkgs.hello" not in backend.target.config.read_text()
+    assert old.read_text().startswith("hostname:WRONG-OLD-REQUEST")
+    assert not old.with_name("config.sys").exists()
+    status = cli("status")
+    assert status["workflow"] == "native" and status["rules_file"] is None
+    assert "native_pending" not in status["managed_state"]
+
+
+def test_standalone_native_rejected_values_do_not_write_sources(native):
+    import shutil
+    import subprocess
+
+    backend, store = native
+    before = backend.target.config.read_bytes()
+    result = subprocess.run(
+        [
+            shutil.which("acenix"),
+            "--config",
+            str(backend.target.config),
+            "--state",
+            str(store.root),
+            "set",
+            "hardware.bluetooth.enable",
+            "str:not-a-bool",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode != 0
+    assert backend.target.config.read_bytes() == before
+    assert not store.read()
+
+
+def test_native_build_only_keeps_saved_sources_and_does_not_activate(
+    native, monkeypatch
+):
+    from acenix.native import Native
+
+    backend, store = native
+    transactions = Transactions(backend, store)
+    workflow = Native(backend, store, transactions)
+    workflow.edit(parse("pkg.hello:true"))
+    saved = backend.target.config.read_bytes()
+
+    def fail_build(target, **kwargs):
+        assert "pkgs.hello" in target.config.read_text()
+        raise ToolError("TEST_BUILD_BOUNDARY_NO_ACTIVATION")
+
+    monkeypatch.setattr(backend, "build", fail_build)
+    monkeypatch.setattr(
+        backend, "activate", lambda *args: pytest.fail("No host activation")
+    )
+    with pytest.raises(ToolError, match="TEST_BUILD_BOUNDARY"):
+        transactions.apply(
+            workflow.plan(),
+            mode="build",
+            confirm=lambda *args: pytest.fail(
+                "Build mode has no activation confirmation"
+            ),
+            rules_path=None,
+        )
+    assert backend.target.config.read_bytes() == saved
+    assert store.read()["native_pending"]

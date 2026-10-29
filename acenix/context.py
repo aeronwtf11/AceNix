@@ -120,7 +120,11 @@ def resolve_sudo_defaults(args):
         return
     if not getattr(args, "state_explicit", False):
         args.state = root_home / ".local/state/acenix"
-    if getattr(args, "rules_explicit", False) or not _uses_rules(args):
+    if (
+        getattr(args, "native", False)
+        or getattr(args, "rules_explicit", False)
+        or not _uses_rules(args)
+    ):
         return
 
     configured = os.environ.get("XDG_CONFIG_HOME")

@@ -404,6 +404,31 @@ class NixOS:
         # checking. This does not pretend that a successful build occurred.
         return self.eval("n.config.system.build.toplevel.drvPath", target=target)
 
+    def native_data(self, paths=(), packages=(), *, full=False):
+        """Read the native source, tolerating obsolete names in edit history."""
+        values, kinds, catalogue = {}, {}, {}
+        for path in paths:
+            parts = to_nix(list(attr_parts(path)))
+            selected = f"lib.attrByPath {parts} {{ __acenixAbsent = true; }} n.config"
+            values[path] = f"render ({selected})"
+            kinds[path] = f'if builtins.isPath ({selected}) then "path" else "json"'
+        for name in packages:
+            parts = to_nix(list(attr_parts(name)))
+            catalogue[name] = f"""let p = lib.attrByPath {parts} null n.pkgs;
+              result = builtins.tryEval (if lib.isDerivation p then p.outPath else null);
+              in if result.success then result.value else null"""
+        return self.eval(
+            f"""{{
+              values = encodeAttrs {self._attributes(values)};
+              kinds = encodeAttrs {self._attributes(kinds)};
+              packages = encodeAttrs {self._attributes(catalogue)};
+              installed = render n.config.environment.systemPackages;
+              warnings = n.config.warnings;
+              derivation = {"n.config.system.build.toplevel.drvPath" if full else "null"};
+            }}""",
+            read_write=full,
+        )
+
     def diagnostic_data(self):
         return self.eval(f"""{{
           derivation = n.config.system.build.toplevel.drvPath;

@@ -22,15 +22,16 @@ or candidate checks. See [performance measurements](PERFORMANCE.md).
 
 ```mermaid
 flowchart LR
-  CLI --> Rules
-  Rules --> Engine
+  CLI --> Engine
   Engine --> Metadata[NixOS metadata and types]
   Engine --> Editor[Native source token editor]
   Editor --> Candidate[Temporary candidate tree]
   Candidate --> Evaluate[Parse and full system evaluation]
-  Evaluate --> Build[Real native system build]
+  Evaluate --> Save[Backup and save native edit]
+  Save --> Review[Preview native files]
+  Review --> Build[Full evaluation and real system build]
   Build --> Confirm[Explicit confirmation]
-  Confirm --> Journal[Backups and source commit journal]
+  Confirm --> Journal[Activation backup journal]
   Journal --> Activate[Native profile and activation]
 ```
 
@@ -68,29 +69,25 @@ expressions are removable; external list items and expressions are retained.
 Ownership, history, profiles and backup journals use private per-account state.
 Profile documents are explicit overlays, not wholesale ownership of the machine.
 
-Rule selection and transaction-state ownership are separate. An ordinary user
-stages into their own rule document. Under a validated sudo caller identity,
-commands that use rules select an existing caller-owned `config.ace` or legacy
-`config.sys` automatically; `sudo` and `sudo -H` therefore support the same
-stage-as-user, preview-and-apply-as-administrator workflow. Caller identity and
-file ownership are checked before choosing that document. If no caller document
-exists, sudo retains root's rule defaults; genuine root sessions also retain
-their own defaults. No command elevates privileges or activates changes merely
-because a caller document was selected.
+The default workflow uses `native.py`: commands prepare a conservative source
+edit, evaluate a private candidate, back up sources, then save native files
+without activation. Preview and apply read the current files directly. Apply
+fully evaluates and builds before authorization, without rewriting those saved
+sources. Source baselines and evaluated values in private state serve comparison
+and recovery only; they never replace or override native configuration. External
+edits require review. Baselines reset after native updates to avoid comparing
+values evaluated with different inputs.
 
-Sudo transaction state defaults to the canonical root home from the account
-database, rather than an inherited caller home or XDG state directory. It remains
-root-owned and private; user history, profiles, ownership records and journals
-are not imported. Ordinary user previews cannot use root's package-ownership
-records; run `sudo acenix preview` for the complete administrative plan. Explicit
-`--rules` and `--state` selections keep their existing validation and precedence.
+Native administration uses root's canonical private state, independent of user
+XDG variables inherited by sudo. Use the same administrator account/state for
+edits and activation. Routine status/doctor output excludes private baseline
+values; explicit source diffs and backup records can contain sensitive data.
+No account's state is imported into another account's state.
 
-Existing caller rule documents in an inherited custom `XDG_CONFIG_HOME` are
-supported. A custom caller location stripped from the sudo environment cannot
-be inferred and requires explicit `--rules`. An existing root-owned document
-in a custom XDG configuration directory outside the caller's home is retained
-as an administrator selection. Choosing rules never relaxes state-directory
-permissions or transfers state between accounts.
+`--rules PATH` explicitly selects the previous staged-document workflow for
+compatibility. The internal portable parser also supports reusable profiles and
+explicit `import-rules PATH` migration. Neither `config.ace` nor `config.sys` is
+read or written by the default workflow.
 
 No subprocess uses `shell=True`. CLI values are JSON data or explicitly typed
 paths, and all Nix strings escape interpolation. Commands use argument vectors;

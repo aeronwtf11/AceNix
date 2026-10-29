@@ -434,5 +434,34 @@ pkgs.testers.runNixOSTest {
         assert machine.succeed("sha256sum /root/acenix.sys").strip() == staged
         assert machine.succeed("cat /etc/hostname").strip() == "acenix-c"
         assert result["staged_rules_applied"] is False, result
+
+    with subtest("default commands edit native files, ignore old requests and activate owned packages"):
+        cli = cli.replace(" --rules /root/acenix.sys", "").replace(" --state /root/acenix-state", " --state /root/acenix-native-state")
+        machine.succeed("mkdir -p /root/.config/acenix; printf 'pkg.invalid-old-package:true\\n' > /root/.config/acenix/config.ace")
+        command("setr hostname:acenix-a")
+        result = command("install hello")
+        assert result["result"] == "native-edited" and result["activation_performed"] is False, result
+        assert command("get networking.hostName") == "acenix-a"
+        assert "pkgs.hello" in machine.succeed("cat /etc/nixos/configuration.nix")
+        before, running, boot_profile = sources(), current(), profile()
+        preview = command("preview --check")
+        assert preview["workflow"] == "native" and preview["rules_file"] is None, preview
+        assert preview["packages"]["add"] == ["hello"], preview
+        command("apply --mode build")
+        assert sources() == before and current() == running and profile() == boot_profile
+        result = command("apply" + authorization)
+        assert result["result"] == "activated", result
+        machine.succeed("hello")
+        assert machine.succeed("cat /etc/hostname").strip() == "acenix-a"
+        assert command("preview")["change_count"] == 0
+        command("remove hello")
+        command("setr hostname:acenix-b")
+        preview = command("preview")
+        assert preview["packages"]["remove"] == ["hello"], preview
+        command("apply" + authorization)
+        machine.fail("test -x /run/current-system/sw/bin/hello")
+        assert machine.succeed("cat /etc/hostname").strip() == "acenix-b"
+        assert command("doctor")["healthy"] is True
+        assert machine.succeed("cat /root/.config/acenix/config.ace").strip() == "pkg.invalid-old-package:true"
   '';
 }

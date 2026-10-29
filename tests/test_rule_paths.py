@@ -122,7 +122,19 @@ def test_doctor_reads_legacy_document_without_migration(locations, tmp_path, cap
     current, legacy, _ = locations
     original = b"pkg.sl:true\n"
     legacy.write_bytes(original)
-    assert main(["--config", str(tmp_path / "missing.nix"), "doctor", "--json"]) == 1
+    assert (
+        main(
+            [
+                "--rules",
+                str(legacy),
+                "--config",
+                str(tmp_path / "missing.nix"),
+                "doctor",
+                "--json",
+            ]
+        )
+        == 1
+    )
     result = json.loads(capsys.readouterr().out)
     check = next(row for row in result["checks"] if row["check"] == "rule document")
     assert check["detail"]["file"] == str(legacy)
@@ -134,24 +146,37 @@ def test_profile_staging_migrates_default_document(locations, capsys):
     current, legacy, _ = locations
     original = b"hostname:my-pc\n"
     legacy.write_bytes(original)
-    assert main(["profile", "create", "saved", "--json"]) == 0
+    assert main(["--rules", str(legacy), "profile", "create", "saved", "--json"]) == 0
     capsys.readouterr()
-    assert main(["profile", "activate", "saved", "--stage", "--json"]) == 0
+    assert (
+        main(
+            [
+                "--rules",
+                str(legacy),
+                "profile",
+                "activate",
+                "saved",
+                "--stage",
+                "--json",
+            ]
+        )
+        == 0
+    )
     result = json.loads(capsys.readouterr().out)
-    assert result["rules"] == str(current)
-    assert current.read_bytes() == original and legacy.read_bytes() == original
+    assert result["rules"] == str(legacy)
+    assert not current.exists() and legacy.read_bytes() == original
 
 
 def test_failed_profile_activation_retains_legacy_rules(locations, monkeypatch, capsys):
     current, legacy, _ = locations
     original = b"hostname:my-pc\n"
     legacy.write_bytes(original)
-    assert main(["profile", "create", "saved", "--json"]) == 0
+    assert main(["--rules", str(legacy), "profile", "create", "saved", "--json"]) == 0
     capsys.readouterr()
 
     def fail(*args, **kwargs):
         raise ToolError("evaluation failed")
 
     monkeypatch.setattr("acenix.cli.Engine.plan", fail)
-    assert main(["profile", "activate", "saved", "--json"]) == 3
+    assert main(["--rules", str(legacy), "profile", "activate", "saved", "--json"]) == 3
     assert legacy.read_bytes() == original and not current.exists()

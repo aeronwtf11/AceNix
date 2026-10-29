@@ -1,7 +1,7 @@
-include main.py config.ace flake.nix flake.lock package.nix requirements-test.txt
+include main.py flake.nix flake.lock package.nix requirements-test.txt
 recursive-include docs *.md
 recursive-include nix *.nix
 recursive-include assets *.png
-recursive-include tests *.py
+recursive-include tests *.py *.txt
 recursive-include scripts *.sh
 recursive-include .github/workflows *.yml

@@ -8,6 +8,7 @@ from .nixos import NixOS, discover
 from .rules import load
 from .transactions import Transactions
 from .engine import Engine
+from .native import Native
 
 
 def diagnose(args, store, progress=None):
@@ -36,16 +37,17 @@ def diagnose(args, store, progress=None):
             "detail": "Activation requires NixOS; development can use another Linux distribution.",
         }
     )
-    record(
-        "rule document",
-        lambda: {
-            "rules": len(
-                load(args.rules, required=getattr(args, "rules_explicit", False))
-            ),
-            "file": str(args.rules),
-            "exists": args.rules.exists(),
-        },
-    )
+    if not getattr(args, "native", False):
+        record(
+            "rule document",
+            lambda: {
+                "rules": len(
+                    load(args.rules, required=getattr(args, "rules_explicit", False))
+                ),
+                "file": str(args.rules),
+                "exists": args.rules.exists(),
+            },
+        )
     try:
         target = discover(args.config, args.flake, args.host, args.module)
     except AceNixError as error:
@@ -100,13 +102,21 @@ def diagnose(args, store, progress=None):
             {
                 "check": "source permissions",
                 "status": "warning",
-                "detail": "Read-only access: inspection and preview are available. Applying native changes needs administrator write access; keep the same rules and state paths when granting it.",
+                "detail": "Read-only access: inspection and preview are available. Editing native files and activation need administrator access. Use sudo consistently for system administration.",
             }
         )
     record("private state directory", store.inspect)
-    record("managed state", store.read)
+    record("managed state", store.public_state)
 
     def pending():
+        if getattr(args, "native", False):
+            plan = Native(backend, store, Transactions(backend, store)).plan()
+            return {
+                "workflow": "native",
+                "files": list(plan.display_changes),
+                "target": plan.target,
+                "configuration_document": "native NixOS modules",
+            }
         plan = Engine(backend).plan(
             load(args.rules, required=getattr(args, "rules_explicit", False)),
             store.read(),
@@ -118,8 +128,17 @@ def diagnose(args, store, progress=None):
             "conflicts": [],
         }
 
-    progress("Checking saved rules and native sources")
-    record("pending rule types and source conflicts", pending)
+    progress(
+        "Checking native sources and edit history"
+        if getattr(args, "native", False)
+        else "Checking saved rules and native sources"
+    )
+    record(
+        "native sources and edit history"
+        if getattr(args, "native", False)
+        else "pending rule types and source conflicts",
+        pending,
+    )
     record(
         "native store connection",
         lambda: backend.run(

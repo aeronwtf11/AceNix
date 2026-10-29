@@ -10,12 +10,12 @@ from acenix.cli import main
 # VERSION
 name = "AceNix"
 
-# MAIN — read the selected config.ace and actual NixOS configuration.
+# MAIN — read and edit the selected native NixOS configuration.
 # VALUES and READING AND VALIDATING now live in acenix/rules.py.
 # NIXOS INTEGRATION uses native evaluation in acenix/nixos.py.
 
 # EXTRAS
-# Fastfetch stays accessible: python3 core/main.py setr:fastfetch status
+# Fastfetch stays accessible: acenix setr:fastfetch status
 # Its user-only backup/restore code lives in acenix/fastfetch.py.
 
 if __name__ == "__main__":

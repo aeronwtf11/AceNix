@@ -26,7 +26,7 @@ class Updates:
         self.backend, self.store = backend, store
         self.progress = progress or (lambda message: None)
 
-    def run(self, *, mode, inputs_only, confirm):
+    def run(self, *, mode, inputs_only, confirm, native=False):
         if mode not in {"build", "test", "boot", "switch"}:
             raise ValidationError("Update mode must be build, test, boot or switch.")
         if inputs_only and mode != "switch":
@@ -42,6 +42,7 @@ class Updates:
         summary = {
             "operation": "update",
             "result": "planned",
+            "workflow": "native" if native else "legacy-rules",
             "target": target.identity,
             "mode": selected_mode,
             "action": "Refresh native package sources"
@@ -114,6 +115,7 @@ class Updates:
 
         result = {
             "result": "updated",
+            "workflow": "native" if native else "legacy-rules",
             "target": target.identity,
             "mode": selected_mode,
             "activation_performed": not inputs_only and mode != "build",
@@ -123,6 +125,11 @@ class Updates:
             "user_profiles_updated": False,
         }
         try:
+            if native and result["activation_performed"]:
+                state = self.store.read()
+                state.pop("native_pending", None)
+                state.pop("native_baseline", None)
+                self.store.write("state.json", state)
             self.store.history({"operation": "update", **result})
         except (AceNixError, OSError) as error:
             message = (

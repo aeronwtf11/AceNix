@@ -1,4 +1,4 @@
-"""AceNix command-line interface: stage, preview, then explicitly apply."""
+"""AceNix command-line interface: edit native files, review, explicitly apply."""
 
 import argparse
 import json
@@ -11,7 +11,7 @@ import sys
 from . import __version__, rules
 from .context import resolve_sudo_defaults
 from .doctor import diagnose
-from .engine import Engine, mapped, service_option
+from .engine import Engine, SERVICES, mapped, service_option
 from .errors import (
     AceNixError,
     Cancelled,
@@ -23,13 +23,14 @@ from .errors import (
 from .fastfetch import Fastfetch
 from .generations import generations, rollback
 from .nixos import NixOS, discover
+from .native import Native, DEFAULT_OPTIONS
 from .presentation import Terminal, failure, human
 from .profiles import Profiles
 from .storage import Store, atomic_write, digest, safe_path
 from .transactions import Transactions
 from .updates import Updates, discover_update
 
-COMMANDS = "help status get set setr install remove update format enable disable packages services service options profile preview apply generations rollback history doctor backups recover completion setr:fastfetch".split()
+COMMANDS = "help status get set setr install remove update import-rules format enable disable packages services service options profile preview apply generations rollback history doctor backups recover completion setr:fastfetch".split()
 
 
 def xdg(name, fallback):
@@ -67,6 +68,7 @@ class RulesPathAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         setattr(namespace, self.dest, values)
         namespace.rules_explicit = True
+        namespace.native = False
 
 
 class StatePathAction(argparse.Action):
@@ -158,9 +160,9 @@ def parser():
         type=Path,
         action=RulesPathAction,
         default=default_rules_path(),
-        help="Rule document (default: ~/.config/acenix/config.ace; accepts legacy config.sys)",
+        help="Optional legacy rule document; the default edits native NixOS files directly",
     )
-    root.set_defaults(rules_explicit=False)
+    root.set_defaults(rules_explicit=False, native=True)
     root.add_argument(
         "--state",
         type=Path,
@@ -177,21 +179,26 @@ def parser():
         return child
 
     command("help", "Show command help").add_argument("topic", nargs="*")
-    command("status", "Show configuration and rule status")
-    command("format", "Group config.ace sections without evaluating or changing NixOS")
+    command("status", "Show the native NixOS configuration and runtime")
+    command("format", "Group a legacy rule document (--rules PATH required)")
+    command(
+        "import-rules", "Import old requests directly into native NixOS files"
+    ).add_argument("file", type=Path)
     command("get", "Read actual evaluated NixOS values").add_argument(
         "option", nargs="?"
     )
-    setter = command("set", "Stage a native option (JSON, str:, path:, or text)")
+    setter = command("set", "Write a native option (JSON, str:, path:, or text)")
     setter.add_argument("option")
     setter.add_argument("value")
-    command("setr", "Stage a portable rule:value").add_argument("rule")
+    command("setr", "Write a portable rule:value into native NixOS").add_argument(
+        "rule"
+    )
     for name in ["install", "remove"]:
-        command(name, "Stage declarative package " + name).add_argument(
+        command(name, "Edit native declarative package " + name).add_argument(
             "names", nargs="+"
         )
     for name in ["enable", "disable"]:
-        command(name, "Stage declarative service " + name).add_argument("name")
+        command(name, "Edit native declarative service " + name).add_argument("name")
     for name in ["packages", "services", "options"]:
         sub = command(name, "Inspect native " + name).add_subparsers(
             dest="action", required=True
@@ -212,7 +219,7 @@ def parser():
     )
     service.add_argument("action", choices=["status"])
     service.add_argument("name")
-    sub = command("profile", "Manage reusable rule profiles").add_subparsers(
+    sub = command("profile", "Manage reusable native selections").add_subparsers(
         dest="action", required=True
     )
     output_flags(sub.add_parser("list"))
@@ -226,7 +233,7 @@ def parser():
             child.add_argument(
                 "--stage",
                 action="store_true",
-                help="Only stage the profile; do not activate",
+                help="Save profile selections to native files without activation",
             )
             apply_flags(child)
     child = command("preview", "Check requested values and summarize changes")
@@ -363,6 +370,10 @@ def dispatch(args):
     if command == "history":
         return store.read("history.json", [])
     if command == "format":
+        if args.native:
+            raise ValidationError(
+                "AceNix now edits native NixOS files directly. Use your native Nix formatter; --rules PATH format remains available for old rule documents."
+            )
         rules.require_document(args.rules)
         with store.lock():
             before = args.rules.read_bytes()
@@ -385,7 +396,11 @@ def dispatch(args):
                 else getattr(extra, args.action)()
             )
     profiles = Profiles(store)
-    if command == "profile" and args.action != "activate":
+    if (
+        command == "profile"
+        and args.action != "activate"
+        and not (args.native and args.action == "create")
+    ):
         with store.lock():
             if args.action == "list":
                 return profiles.list()
@@ -408,9 +423,14 @@ def dispatch(args):
         backend.target,
         Transactions(backend, store, progress=progress),
     )
+    native = Native(backend, store, transactions)
     if command == "get":
         if args.option:
             return backend.get(args.option)
+        if args.native:
+            return backend.native_data(
+                store.read().get("managed_options") or DEFAULT_OPTIONS
+            )["values"]
         values, _, _ = mapped(backend, rules.load(args.rules))
         return {path: backend.get_optional(path) for path in values}
     if command == "options":
@@ -473,12 +493,18 @@ def dispatch(args):
             "hostname_pending_runtime": bool(configured)
             and runtime is not None
             and runtime != configured,
-            "staged_rules": len(rules.load(args.rules)),
-            "rules_file": str(args.rules),
-            "managed_state": store.read(),
+            "workflow": "native" if args.native else "legacy-rules",
+            "staged_rules": None if args.native else len(rules.load(args.rules)),
+            "rules_file": None if args.native else str(args.rules),
+            "managed_state": store.public_state(),
         }
     with store.lock():
         authorization = lambda summary, action: confirm(args, summary, action)
+        if command == "profile" and args.action == "create" and args.native:
+            return profiles.create(args.name, native.profile_text())
+        if command == "import-rules":
+            result = native.edit(rules.load(args.file, required=True))
+            return {**result, "next_commands": management_commands(args)}
         if command == "recover":
             return transactions.recover(args.backup, authorization)
         if command == "rollback":
@@ -488,35 +514,82 @@ def dispatch(args):
                 mode=args.mode,
                 inputs_only=args.inputs_only,
                 confirm=authorization,
+                native=args.native,
             )
         if command in {"set", "setr", "install", "remove", "enable", "disable"}:
             if command == "set":
                 value = rules.parse_value(args.value)
-                backend.validate({rules.validate_attr(args.option): value})
+                rules.validate_attr(args.option)
+                if not args.native:
+                    backend.validate({args.option: value})
                 updates = [(args.option, value, "options")]
             elif command == "setr":
                 parsed = rules.parse(args.rule, "<command>")
                 if len(parsed) != 1:
                     raise ValidationError("setr accepts exactly one rule:value pair.")
-                values, packages, _ = mapped(backend, parsed)
-                if values:
-                    backend.validate(values)
-                if packages:
-                    backend.packages_many(packages)
+                if not args.native:
+                    values, packages, _ = mapped(backend, parsed)
+                    if values:
+                        backend.validate(values)
+                    if packages:
+                        backend.packages_many(packages)
                 updates = [(parsed[0].key, parsed[0].value, parsed[0].section)]
             elif command in {"install", "remove"}:
-                backend.packages_many(args.names)
+                if not args.native:
+                    backend.packages_many(args.names)
                 updates = [
                     ("pkg." + attr, command == "install", "packages")
                     for attr in args.names
                 ]
             else:
-                updates = [
-                    (service_option(backend, args.name), command == "enable", "options")
-                ]
+                if args.native:
+                    option = SERVICES.get(args.name)
+                    if option is None:
+                        option = (
+                            rules.validate_attr(args.name)
+                            if args.name.endswith(".enable")
+                            else "services."
+                            + rules.validate_attr(args.name)
+                            + ".enable"
+                        )
+                else:
+                    option = service_option(backend, args.name)
+                updates = [(option, command == "enable", "options")]
+            if args.native:
+                text = ""
+                for key, value, section in updates:
+                    text = rules.update(text, key, value, section)
+                result = native.edit(rules.parse(text, "<command>"))
+                return {**result, "next_commands": management_commands(args)}
             return stage(args, store, updates)
         if command == "profile" and args.action == "activate":
             text = profiles.show(args.name)
+            if args.native:
+                if args.mode == "build" and not args.stage:
+                    plan = Engine(backend).plan(
+                        rules.parse(text, "<profile>"), store.read(), digest(b"")
+                    )
+                    return {
+                        **transactions.apply(
+                            plan, mode="build", confirm=authorization, rules_path=None
+                        ),
+                        "profile": args.name,
+                    }
+                result = native.edit(rules.parse(text, "<profile>"))
+                if not args.stage:
+                    plan = native.plan()
+                    plan.next_commands = management_commands(args)
+                    result = transactions.apply(
+                        plan, mode=args.mode, confirm=authorization, rules_path=None
+                    )
+                    state = store.read()
+                    state["active_profile"] = args.name
+                    store.write("state.json", state)
+                return {
+                    **result,
+                    "profile": args.name,
+                    "next_commands": management_commands(args),
+                }
             before = args.rules.read_bytes() if args.rules.exists() else b""
             previous = write_rule_document(args, text.encode(), before)
             store.write("preview.json", {})
@@ -558,6 +631,15 @@ def dispatch(args):
                 store.write("state.json", state)
             return {**result, "profile": args.name}
         if command in {"preview", "apply"}:
+            if args.native:
+                progress(f"Reading native configuration {target.identity}")
+                plan = native.plan()
+                plan.next_commands = management_commands(args)
+                if command == "preview":
+                    return transactions.preview(plan, full=args.check)
+                return transactions.apply(
+                    plan, mode=args.mode, confirm=authorization, rules_path=None
+                )
             progress(f"Reading rules from {args.rules.absolute()}")
             data = (
                 args.rules.read_bytes()

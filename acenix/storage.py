@@ -117,6 +117,23 @@ class Store:
                 raise ValidationError(
                     "Managed packages must map attribute names to relative source files."
                 )
+            for key in ("managed_options", "native_package_selections"):
+                if key in value and (
+                    not isinstance(value[key], list)
+                    or not all(isinstance(item, str) for item in value[key])
+                ):
+                    raise ValidationError(
+                        f"{key} must be a list of native attribute names."
+                    )
+            for key in ("native_pending", "native_baseline"):
+                pending = value.get(key, {})
+                if not isinstance(pending, dict) or any(
+                    not isinstance(pending.get(field, {}), dict)
+                    for field in ("snapshot", "values", "packages")
+                ):
+                    raise ValidationError(
+                        "Native edit records must contain valid source and value maps."
+                    )
         return value
 
     @contextmanager
@@ -137,6 +154,14 @@ class Store:
             return self.validate(name, json.loads(path.read_text()))
         except (ValueError, OSError) as error:
             raise ValidationError(f"Cannot read state {path}: {error}") from error
+
+    def public_state(self):
+        state = self.read()
+        return {
+            key: value
+            for key, value in state.items()
+            if key not in {"native_pending", "native_baseline"}
+        }
 
     def write(self, name, value):
         self.prepare()

@@ -199,7 +199,10 @@ class Terminal:
 
 
 def preview(terminal, value, details=False):
-    terminal.heading("Configuration Preview")
+    native = value.get("workflow") == "native"
+    terminal.heading(
+        "Native Configuration Preview" if native else "Configuration Preview"
+    )
     context = [("Target", value["target"])]
     if value.get("rules_file"):
         context.append(
@@ -270,7 +273,14 @@ def preview(terminal, value, details=False):
             ("Changes", count),
             (
                 "Unchanged",
-                f"{len(unchanged) + len(packages.get('already_present', []))} staged settings/packages; other definitions are preserved",
+                f"{len(unchanged) + len(packages.get('already_present', []))} "
+                + ("tracked" if native else "staged")
+                + " settings/packages"
+                + (
+                    " compared with the saved source baseline"
+                    if native
+                    else "; other definitions are preserved"
+                ),
             ),
             (
                 "Evaluation",
@@ -290,7 +300,7 @@ def preview(terminal, value, details=False):
                 "Reboot",
                 "May be needed for boot, hardware or hostname changes"
                 if value.get("reboot_may_be_required")
-                else "No requirement inferred from staged options",
+                else "No requirement inferred from tracked options",
             ),
             (
                 "Risk",
@@ -301,6 +311,11 @@ def preview(terminal, value, details=False):
             ("Files", len(value["files"])),
         ]
     )
+    if native:
+        terminal.pairs([("Configured packages", value.get("configured_packages"))])
+        terminal.text(
+            "Reads native NixOS files directly. Diffs compare recorded source history; runtime differences are not fully inferred."
+        )
     if value.get("activation"):
         terminal.pairs(
             [
@@ -329,7 +344,7 @@ def preview(terminal, value, details=False):
         if value.get("activation")
         else "Next step: "
         + (value.get("next_commands") or {}).get("apply", "acenix apply")
-        if count
+        if count or native
         else "Staged values already match the evaluated configuration. Apply can still rebuild or synchronize runtime/boot state."
     )
 
@@ -388,7 +403,9 @@ def human(
             "Scope: declared NixOS system packages. Personal nix profiles, standalone Home Manager and Flatpak need their own updates."
         )
         terminal.text(
-            "Pending config.ace requests remain staged; use acenix apply for those changes."
+            "Rebuild uses the current native NixOS files. Personal package profiles require separate updates."
+            if value.get("workflow") == "native"
+            else "Explicit rule requests remain staged; use acenix apply for those changes."
         )
     elif command == "status":
         terminal.brand()
@@ -412,7 +429,14 @@ def human(
                     else "Unavailable",
                 ),
                 ("Target", value["target"]),
-                ("Saved rules", value["staged_rules"]),
+                (
+                    "Configuration"
+                    if value.get("workflow") == "native"
+                    else "Saved rules",
+                    "Native NixOS files"
+                    if value.get("workflow") == "native"
+                    else f"{value['staged_rules']} saved rules",
+                ),
                 (
                     "Active profile",
                     value.get("managed_state", {}).get("active_profile", "None"),
@@ -483,7 +507,7 @@ def human(
         if len(value["results"]) < value["total"]:
             terminal.text("Increase --limit to retrieve more matches.")
         terminal.text(
-            "Inspect: acenix packages info <package> | Stage: acenix install <package>"
+            "Inspect: acenix packages info <package> | Add: sudo acenix install <package>"
         )
     elif command == "packages" and action == "list":
         terminal.heading("Configured System Packages")
@@ -610,14 +634,14 @@ def human(
             for row in value["generations"]:
                 terminal.pairs([(f"Generation {row['generation']}", row["path"])])
     elif command == "profile" and action == "list":
-        terminal.heading("Rule Profiles")
+        terminal.heading("Configuration Profiles")
         terminal.table(
             ("Profile",),
             [(name,) for name in value],
             empty="No profiles saved. Create one with: acenix profile create <name>",
         )
     elif command == "profile" and action == "show":
-        terminal.heading("Profile Rules")
+        terminal.heading("Profile Selections")
         terminal.lines.append(clean(value).rstrip() or "  No rules in this profile.")
     elif (
         command == "profile"
@@ -626,7 +650,7 @@ def human(
     ):
         terminal.heading("Rule Profile")
         messages = {
-            "created": "Profile saved from the current rule document.",
+            "created": "Reusable configuration selections saved.",
             "deleted": "Saved profile deleted.",
             "exported": "Profile exported successfully.",
             "profile-staged": "Profile rules staged. Review with acenix preview, then acenix apply.",
@@ -684,6 +708,41 @@ def human(
         )
         terminal.pairs([("Rules file", value["rules"])])
         terminal.text("Native configuration and the running system are unchanged.")
+    elif isinstance(value, dict) and value.get("result") in {
+        "native-edited",
+        "native-unchanged",
+    }:
+        terminal.heading(
+            "Native Configuration Updated"
+            if value["source_changes"]
+            else "Already Configured"
+        )
+        terminal.pairs([("Target", value["target"])])
+        for row in value.get("values", []):
+            terminal.text(
+                f"~ {display_key(row['option'])}: {readable(row['requested'])}"
+            )
+        for key, marker, label in [
+            ("add", "+", "Added"),
+            ("remove", "-", "Removed"),
+            ("already_present", "=", "Already configured"),
+        ]:
+            for name in value.get("packages", {}).get(key, []):
+                terminal.text(f"{marker} {label}: {name}")
+        if value.get("backup"):
+            terminal.pairs([("Backup", value["backup"])])
+        for warning in value.get("warnings", []):
+            terminal.text("! " + warning)
+        terminal.text(
+            "Saved directly to native NixOS files. The running system changes only after apply."
+            if value["source_changes"]
+            else "The native configuration already contains these values. Apply can synchronize the running system."
+        )
+        commands = value.get("next_commands") or {
+            "preview": "sudo acenix preview",
+            "apply": "sudo acenix apply",
+        }
+        terminal.text(f"Next step: {commands['preview']}, then {commands['apply']}.")
     elif isinstance(value, dict) and value.get("result") == "staged":
         terminal.heading("Changes Staged")
         if command in {"install", "remove"}:

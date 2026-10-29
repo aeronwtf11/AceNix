@@ -21,7 +21,21 @@ Source snapshots, conflict detection, read-only option checks, package ownership
 and explicit activation authorization remain in place. Apply still builds the
 candidate with Nix before committing and activating it.
 
-## Measured example
+## Direct native file workflow
+
+The default workflow no longer plans a separate rule document during preview.
+`preview` uses one fresh batched Nix evaluation of the native file and tracked
+values/packages. `apply` uses one full evaluation, then realizes its exact
+reviewed derivation without another NixOS evaluation. Native edit commands use
+batched planning and candidate verification; the CLI no longer repeats the
+same package or option preflight query before planning. Doctor reads the
+native edit journal without replanning old requests.
+
+These process counts are regression-tested using real Nix. They are not a
+promise of a fixed runtime: full system evaluation, downloads and actual builds
+still depend on the configuration and available resources.
+
+## Earlier staged-workflow measurement
 
 The following measurements used the installed `acenix` executable against a
 disposable conventional NixOS configuration. The rule document requested a

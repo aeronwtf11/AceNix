@@ -302,7 +302,7 @@ def test_update_output_explains_mode_and_scope(mode):
     text = human(value, "update", ascii=True)
     assert "Update Complete" in text
     assert "Personal nix profiles" in text
-    assert "config.ace requests remain staged" in text
+    assert "Explicit rule requests remain staged" in text
     assert "nixos" in text
     assert "{" not in text
     if mode in {"inputs-only", "build"}:

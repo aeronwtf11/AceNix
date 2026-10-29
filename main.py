@@ -1,17 +1,10 @@
 # AceNix — keep the original root entry point working.
-from pathlib import Path
 import sys
 from core.main import main
 
-# MAIN — read the test configuration next to this Python file when launched
-# without CLI arguments, preserving the original prototype preview workflow.
+# MAIN — use the native NixOS target; there is no separate default rule file.
 if __name__ == "__main__":
-    arguments = sys.argv[1:] or [
-        "--rules",
-        str(Path(__file__).with_name("config.ace")),
-        "preview",
-    ]
-    raise SystemExit(main(arguments))
+    raise SystemExit(main(sys.argv[1:] or ["preview"]))
 
 # EXTRAS
-# Fastfetch: python3 main.py setr:fastfetch status
+# Fastfetch: acenix setr:fastfetch status

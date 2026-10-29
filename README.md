@@ -36,15 +36,15 @@ Then use the normal command from any directory:
 ```sh
 acenix --version
 acenix --help
-acenix install firefox
-acenix preview
+sudo acenix install firefox
+sudo acenix preview
 ```
 
 The install adds `acenix` to your Nix profile's `bin` directory. If your current
 terminal does not see the command yet, open a new login terminal so Nix's profile
 PATH is loaded. You do not need to run a binary from a build-output directory.
-`install firefox` stages a declarative package request; review and apply it to
-change the NixOS system.
+`sudo acenix install firefox` writes the package into your native NixOS file,
+with a backup. Review it and run `sudo acenix apply` to build and activate it.
 
 System activation and native generation rollback require NixOS and administrator
 permissions. AceNix has no third-party Python runtime dependencies.
@@ -80,329 +80,161 @@ pip install .
 acenix --help
 ```
 
-## First workflow
+## Everyday use: native NixOS files
+
+AceNix edits **`/etc/nixos/configuration.nix` directly**, including existing
+imported modules when that is where an option is defined. If your file is named
+`config.nix`, select it with `--config /path/config.nix`. There is no second
+`config.ace` to keep synchronized.
 
 ```sh
-acenix install git vim
-acenix enable bluetooth
+sudo acenix install git vim
+sudo acenix enable bluetooth
 sudo acenix preview
 sudo acenix apply
 ```
 
-Save your requests as your normal user, review them, then apply them with
-administrator permissions. Under `sudo`, AceNix automatically selects your
-existing rule document, including a legacy `config.sys`; no `--rules` argument
-is needed for this workflow. Preview and apply display the selected file.
-
-`set`, `setr`, `install`, `remove`, `enable` and `disable` stage rules. **They do
-not activate or immediately rewrite configuration.nix.** `preview` checks the
-requested options and package membership in an isolated native candidate and
-summarizes the changes. It avoids evaluating the complete system derivation by
-default. Use `acenix preview --check` for the full NixOS system and global
-assertions, or `acenix preview --diff` for file changes. The output and JSON state
-which checks ran. Apply always performs the full check and builds the exact
-validated derivation without evaluating NixOS again for the build.
-`--mode build` leaves native files and runtime unchanged. `test`, `boot` and
-`switch` commit the reviewed source files and invoke native activation, with
-explicit confirmation. Boot/network/authentication changes need an additional
-high-impact acknowledgment. Automation can use `--yes --allow-high-impact`.
-Use `sudo acenix doctor` for diagnostics or `sudo acenix apply --mode build`
-to build the candidate without activating it.
-
-Native activation can leave settings pending until reboot. For example, NixOS
-can update `/etc/hostname` while the kernel retains its previous hostname.
-`status` reports the target's configured `hostname`, the local NixOS
-`runtime_hostname`, and whether they differ. Services report their live systemd
-state separately. A completed activation means the native procedure finished;
-it does not imply that every boot-time setting changed immediately.
-
-AceNix never invokes sudo. Staging, inspection and candidate builds can run as
-an ordinary user. Source commits and activation need administrator permissions.
-When you run `sudo acenix`, the selected user rule document is read while
-administrator history, backups and package-ownership records stay in root's
-private state. User-owned state is never copied into it. Use `sudo acenix preview`
-for the complete administration preview: an ordinary user's preview cannot read
-root's package-ownership records after an administrator apply. State directories
-remain private (mode 0700) and owned by the account performing the operation.
-
-Global location options go **before** the command:
+The first two commands validate the requested values and packages, create private
+source backups and **save the native Nix files immediately**. They do not build
+or activate a system. `preview` reads those files and gives a quick check and
+summary. `apply` performs full NixOS evaluation, builds the exact checked system,
+asks for activation authorization, then runs native NixOS activation.
+Packages become usable after that activation succeeds.
 
 ```sh
-acenix --config /etc/nixos/configuration.nix --rules /path/config.ace preview
-acenix --flake /etc/nixos --host my-pc --module /etc/nixos/configuration.nix preview
+sudo acenix remove vim
+sudo acenix disable bluetooth
+sudo acenix set networking.hostName 'str:my-pc'
+sudo acenix setr hostname:my-pc
+sudo acenix apply
 ```
 
-Conventional configurations use `--config`, then `NIXOS_CONFIG`, then
-`/etc/nixos/configuration.nix`. Flakes must be local and locked; select the
-`nixosConfigurations` attribute with `--host`. `--module` selects an existing
-imported module for new definitions when a flake has no unambiguous local target.
-Existing definitions in imported files are discovered from native metadata.
-Keep editable imports within the configuration directory (the config's parent,
-or the flake directory). Symlinked configuration trees are refused.
+Package removal only removes expressions AceNix owns; it preserves unrelated
+packages and reports when another definition still includes a package. Existing
+native comments, imports and other options are preserved. Unsupported or
+ambiguous Nix expressions produce an explanation instead of a destructive rewrite.
+An edit validates the affected values and package membership; full global
+assertions run with `preview --check` and always with `apply`.
 
-## Rules and native options
-
-AceNix stores your rules in `~/.config/acenix/config.ace` (or under
-`$XDG_CONFIG_HOME` when set). Existing default `config.sys` files are still read.
-The next staging command writes `config.ace` and retains the original
-`config.sys` unchanged as a backup. If both exist, `config.ace` is used. Inspection
-commands, including `preview` and `doctor`, do not migrate files, and an explicit
-`--rules /path/config.sys` continues using that exact path.
-
-Staging keeps each section together, with a single `[packages]` and `[options]`
-heading. Existing repeated sections are merged the next time you save a request,
-preserving requests and comments. To tidy an existing document immediately:
+**Native files are the source of truth.** Manual edits are read afresh too.
+The preview compares source history captured by AceNix, not an exhaustive diff
+against the running system. Without a recorded baseline it says so; external
+source edits require high-impact review. After `update` the comparison baseline
+is reset because package inputs have changed. The next edit starts a new one.
 
 ```sh
-acenix format
+sudo acenix preview --diff         # detailed source changes; may contain secrets
+sudo acenix preview --check        # complete NixOS system evaluation
+sudo acenix apply --mode build     # build only; no additional source edits or activation
+sudo acenix doctor                 # diagnostics, no system changes
 ```
 
-This command only formats your rule document; it needs no Nix evaluation and
-does not change the native NixOS configuration. For example:
+`apply --mode test` activates for this session, `--mode boot` installs the next
+boot generation, and the default `switch` activates and updates the system
+profile. Previously saved native edits remain saved when an apply is cancelled
+or a build fails. Undo those source edits with `backups` and `recover` if needed.
+Boot, hardware or hostname settings can still require a reboot. Status reports
+configured and running hostnames separately and does not invent system health.
+Automation can explicitly authorize activation with `--yes --allow-high-impact`.
 
-```ini
-[packages]
-pkg.htop:true
-pkg.librewolf:true
-pkg.sl:true
-
-[options]
-hardware.bluetooth.enable:true
-services.openssh.enable:true
-```
-
-`acenix status` uses one native evaluation for the system overview. Interactive
-terminals show an ASCII AceNix banner; redirected output, narrow/dumb terminals
-and `--ascii` use the compact presentation. JSON stays machine-readable.
-
-With a validated sudo caller, an existing caller-owned rule document is selected
-automatically. This applies to commands that read or stage rules, and works with
-both `sudo acenix` and `sudo -H acenix`. If the caller has no existing document,
-sudo uses root's document; a genuine root login also keeps root's defaults.
-Administrator state stays private in root's own home directory, normally
-`/root/.local/state/acenix`.
-
-`preview`, `apply`, and `get` without an option reject a missing explicit
-`--rules` path; keep using the existing `config.sys` filename until migration
-creates `config.ace`, or create a new document through staging. `preview` and
-`apply` show the selected document, with `(not created; no saved requests)` for
-an absent default.
-
-<details>
-<summary>Advanced: custom locations and separate administrator rules</summary>
-
-`--rules` and `--state` remain explicit choices and take precedence over default
-selection. An explicit `--rules` path continues using that exact filename.
-State still requires private permissions and ownership by the current account;
-selecting another rule document does not transfer its owner's private state.
-
-An inherited custom `XDG_CONFIG_HOME` can preserve the caller's existing rule
-document. If sudo removes that variable, AceNix cannot guess the custom path;
-use `--rules /actual/path/config.ace` instead. An existing root-owned document
-in a custom `XDG_CONFIG_HOME` outside the caller's home remains selected.
-
-To maintain a separate root document intentionally, select it while staging,
-reviewing and applying:
-
-```sh
-sudo acenix --rules /root/.config/acenix/config.ace install git
-sudo acenix --rules /root/.config/acenix/config.ace preview
-sudo acenix --rules /root/.config/acenix/config.ace apply
-```
-
-If `sudo` cannot find a CLI installed only in your user profile, prefer the
-system-wide installation above. You can also select the installed executable
-explicitly:
-
-```sh
-sudo "$(command -v acenix)" preview
-sudo "$(command -v acenix)" apply
-```
-
-</details>
-
-The original beginner-friendly format remains valid:
-
-```ini
-# Comments, sections, and rule order are retained.
-[system]
-hostname:ace-pc
-network:true
-bluetooth:true
-desktop:gnome
-timezone:Europe/Vienna
-
-[packages]
-pkg.firefox:true
-
-[options]
-services.openssh.enable:true
-services.openssh.ports:[22,2222]
-environment.sessionVariables:{"EDITOR":"vim"}
-```
-
-Values support JSON booleans, finite numbers, null, quoted strings, lists and
-attribute sets. Bare text is a string. `str:` forces text, `json:` requires JSON,
-and `path:/absolute/path` supplies a Nix path. Quote values containing delimiters
-or newlines using JSON escapes. Duplicate rules and aliases targeting the same
-option are errors with source lines. Inline `#` belongs to a bare value; use a
-separate line for comments. Omitted rules leave the native configuration alone;
-native NixOS defaults determine effective values.
-
-```sh
-acenix options search bluetooth
-acenix options info services.openssh.enable
-acenix get time.timeZone
-acenix set time.timeZone Europe/Vienna
-acenix set services.openssh.ports '[22,2222]'
-acenix set environment.sessionVariables '{"EDITOR":"vim"}'
-```
-
-Option support comes from NixOS metadata, not a Python list of known options.
-Static options and attribute-set submodule paths (for example
-`users.users.alice.isNormalUser`) use native type checking. Read-only options are
-refused. The candidate's actual evaluated value must equal the requested value;
-priority/import conflicts cannot silently override it. NixOS warnings are shown.
-
-The source editor supports literal module attribute sets, `{ ... }: { ... }`
-functions, expanded modules with separate `options` and `config` blocks,
-dotted/nested definitions, quoted attribute components, scalar/list/attribute-set literals, and
-simple package lists (`[ pkgs.git ]` or `with pkgs; [ git ]`). It preserves
-surrounding comments and bytes. It refuses computed module bodies, dynamic
-attribute names, interpolation, `mkForce`/`mkDefault` value wrappers, multiple
-competing definitions, and computed/concatenated package lists. Native Nix
-editing remains appropriate for those cases. Arbitrary executable Nix expressions
-are not accepted as CLI values. These are explicit safety boundaries, not claims
-of universal rewriting of the Nix language.
-
-## Packages, services and system settings
-
-```sh
-acenix packages search firefox
-acenix packages info firefox
-acenix packages list
-acenix install git vim
-acenix remove git
-sudo acenix update
-acenix services search ssh
-acenix enable ssh
-acenix disable ssh
-acenix service status ssh
-```
-
-Package attributes resolve against the target's evaluated `pkgs`, including
-overlays and nested attributes. Search uses Nix's recursive package search;
-`info` checks installability, platform availability and broken status. Installed
-package identity uses real store paths. Only expressions AceNix added may be
-removed. Packages declared elsewhere are preserved, including shared package
-definitions. An option module must already provide `pkgs` in its function arguments.
+Use `sudo` consistently for administration so edits, ownership records, previews
+and recovery use the same private root state. `acenix status`, options/package
+searches and other readable inspections work as an ordinary user. AceNix never
+invokes sudo itself. If a user-profile installation is not in sudo's command
+path, install AceNix system-wide as described above; for that installation only,
+`sudo "$(command -v acenix)" apply` also runs the installed command.
 
 ### Update NixOS and system packages
 
 ```sh
 sudo acenix update
+sudo acenix update --mode build    # refresh sources and build, without activation
+sudo acenix update --inputs-only   # refresh sources only
 ```
 
-Review the summary and confirm. AceNix refreshes the registered NixOS channel
-or the locked flake inputs, then runs native `nixos-rebuild switch`. This updates
-NixOS and all packages declared by that configuration, including packages added
-through AceNix and previously applied. Nix builds or downloads the changed packages
-individually in its store and activates one consistent system generation. It reuses
-unchanged packages; packages pinned to a particular version stay pinned. The command
-stays on your selected channel/release; it does not move a stable installation to
-another NixOS release or unstable. Some kernel and boot changes require a reboot.
+This delegates to native Nix channel/flake updates and `nixos-rebuild` using the
+current native files. Nix chooses each package's version from your selected
+Nixpkgs and builds a coherent system generation. Personal `nix profile` packages,
+standalone Home Manager and Flatpak have their own update mechanisms.
 
-Pending `config.ace` requests are not applied by `update`; use `sudo acenix apply`
-to install newly staged packages or settings. Personal `nix profile` / `nix-env`
-installations, standalone Home Manager and Flatpak applications use separate
-update commands. Declarative Home Manager configurations integrated into the NixOS
-rebuild follow that configuration's inputs as usual.
-
-For a flake in `/etc/nixos`, `update` detects it and uses the current machine's
-hostname as the `nixosConfigurations` attribute. A different attribute or location
-can be selected explicitly:
+To update **AceNix itself**, update the source used to install it. For a remote
+user-profile installation, inspect `nix profile list`, then run:
 
 ```sh
-sudo acenix --flake /etc/nixos --host my-host update
-sudo acenix update --mode boot       # Install for the next boot
-sudo acenix update --mode build      # Refresh sources and build; no activation
-sudo acenix update --inputs-only     # Previous behavior: refresh sources only
+nix --extra-experimental-features 'nix-command flakes' profile upgrade AceNix
 ```
 
-The update asks for explicit authorization before changing sources. Automation can
-use `--yes --allow-high-impact`; `--json`, `--quiet` and `--verbose` are supported.
-Flake lockfiles are backed up in AceNix's private state directory. Failed updates
-are recorded and do not report success; changed inputs are retained for inspection
-and retry. A failed native activation can leave runtime partially changed, just as
-with a direct `nixos-rebuild`; inspect `acenix generations` before choosing rollback.
-No `configuration.nix` or rule document is rewritten by the update command.
-
-Only the registered channel supplying the selected target's Nixpkgs is refreshed;
-unrelated channels are preserved. Channel updates run as the account owning the
-system channel, normally root. A pinned custom source requires its own explicit
-update rather than silently refreshing an unrelated channel.
-
-Service aliases include ssh/sshd, printing and bluetooth; other service names
-resolve to native `services.NAME.enable` options. Service status reports the
-declarative value separately from systemd LoadState/ActiveState/SubState. An
-unavailable systemd instance is reported, never simulated.
-
-Portable settings include hostname, NetworkManager, bluetooth, timezone, locale,
-PipeWire audio and printers. `user:alice` stages a normal user with native defaults
-and no invented password. More detailed users/groups/hardware/boot settings use
-the generic option commands. Passwords should be managed with native secret/file
-mechanisms, not put in rule documents or source diffs.
-
-Desktops include Plasma, GNOME, Xfce and Hyprland, using option names available in
-the selected NixOS version. `desktop:true` retains an existing detected desktop;
-it does not silently choose one. `desktop:false` disables detected desktops.
-Choosing a different desktop/display manager refuses to replace enabled
-competitors unless their native disable rules are explicit in the same plan.
-
-## Profiles and recovery
+Use the actual profile entry name if different. For an installation pointing at
+`git+file:///home/aaron/AceNix`, first pull the checkout's installed branch:
 
 ```sh
-acenix profile create development
-acenix profile list
-acenix profile show development
-acenix profile export development /path/development.sys
-acenix profile import gaming /path/gaming.sys
-acenix profile activate gaming --stage
+cd ~/AceNix
+git switch acenix-v1.0.0
+git pull --ff-only
+nix --extra-experimental-features 'nix-command flakes' profile upgrade AceNix
+```
+
+A system-wide source/flake installation instead needs its source refreshed and
+a normal NixOS rebuild. `acenix --version` remains 1.0.0 on this release branch;
+check the installed revision in `nix profile list` when comparing updates.
+
+### Your native target
+
+Global location flags go **before** the command:
+
+```sh
+sudo acenix --config /etc/nixos/config.nix install hello
+sudo acenix --flake /etc/nixos --host my-pc --module /etc/nixos/configuration.nix preview
+```
+
+Traditional selection is `--config`, then `NIXOS_CONFIG`, then
+`/etc/nixos/configuration.nix`. Flakes must be local and locked. Existing option
+definitions are found from NixOS metadata; `--module` selects an existing imported
+module for new definitions. Keep editable imports inside the native target's
+directory. Symlinked configuration trees are refused. Root state uses the root
+account's real home, independent of user XDG variables preserved by sudo.
+
+### Old config.ace/config.sys installations
+
+Old request files are **ignored by default and left untouched**. To migrate your
+old requests intentionally, inspect them first, then use:
+
+```sh
+sudo acenix import-rules /home/aaron/.config/acenix/config.ace
 sudo acenix preview
 sudo acenix apply
-acenix profile delete gaming
-acenix generations
-acenix history
-acenix backups
-acenix recover BACKUP_ID
-acenix rollback --generation 42
 ```
 
-Profiles store validated rule documents. Activation uses the same build,
-preview/confirmation, backup and apply transaction. Profiles are explicit
-configuration overlays: settings omitted from the next profile are left alone,
-not deleted or reset implicitly. Set an explicit value to change them. Native
-system generations remain available independently of profiles.
+Import validates and writes those requests into native files, with backups and
+without activation. It never silently enables services from an old request file.
+For compatibility, the explicit `--rules PATH` flag retains the previous
+stage/preview/apply workflow. `--rules PATH format` groups old document sections.
+Neither is needed for normal use.
 
-For direct administrator profile activation, use `sudo acenix profile create NAME`
-and `sudo acenix profile activate NAME --mode switch`; the administrator's private
-profile catalogue is separate, and user profiles are not copied into it.
+### Profiles, source recovery and generations
 
-**Source recovery and native system rollback are different operations.** Recover
-restores checked configuration backups; it never changes the running system.
-Rollback uses existing NixOS generations and never rewrites configuration.nix.
-No generations or backups are deleted automatically. Generation inspection
-reads native profile links without taking a writable Nix profile lock, so it
-works as an ordinary user. It
-distinguishes running, booted and profile-default systems. Next-boot defaults
-are read from systemd-boot metadata or supported GRUB numeric, named, saved and
-one-time entries. An unidentifiable default is reported as unknown.
+```sh
+sudo acenix profile create development
+sudo acenix profile activate development --stage # save native selections only
+sudo acenix profile activate development         # save, build and activate
+sudo acenix profile activate development --mode build # private candidate only
+sudo acenix backups
+sudo acenix recover BACKUP_ID
+acenix generations
+sudo acenix rollback --generation GENERATION
+```
 
-The transaction journal survives interruption. On a failed commit/activation,
-AceNix attempts safe source restoration and preserves recovery information.
-Activation failures can partially change system/profile state: source restoration
-does not claim to undo that. Run doctor and inspect generations before retrying.
-Recovery refuses to overwrite subsequent external edits.
+Profiles capture common native settings, options managed by AceNix and tracked
+package selections. They are reusable selections, not complete copies of every
+NixOS option. Profile import/export remains available. Account catalogues and
+state stay private and separate.
+
+Source recovery restores checked backups and ownership history; it never changes
+the running system. Native generation rollback changes the system generation;
+it never rewrites your native Nix files. Recovery refuses to overwrite later
+external edits. Failed activation can partially change runtime/profile state:
+source restoration does not undo that. Inspect doctor, backups and generations
+before retrying an interrupted operation.
 
 ## CLI and development
 
@@ -435,7 +267,7 @@ Apply reports actual validation, evaluation, build, backup, source-write and
 activation steps as they begin. A failed step cannot produce a success message.
 Build-only, temporary activation and next-boot installation have distinct result
 messages. Status shows evaluated configuration and runtime hostname separately;
-it does not claim that saved rules are pending changes or that diagnostics passed.
+it does not claim that source history is a complete runtime diff or that diagnostics passed.
 
 Unreadable auxiliary files, such as root-owned editor backups, are omitted from
 the temporary candidate and reported as warnings. Their metadata remains in
@@ -474,7 +306,7 @@ measured timings, the build-time limits of those measurements, and native
 regression checks.
 
 The root `main.py` remains a compatibility entry point; no arguments
-preview the adjacent config.ace. `core/main.py` is the understandable CLI entry
+preview the native NixOS target. `core/main.py` is the understandable CLI entry
 point, retaining `# EXTRAS`. The parsing logic lives in `acenix/rules.py`.
 Exactly three optional learning exercises are marked `TODO(USER)` in
 `acenix/presentation.py`; all have working default behavior.

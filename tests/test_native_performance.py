@@ -260,3 +260,49 @@ def test_native_batch_maps_preserve_names_that_match_the_data_codec(counted_nati
         "candidate evaluated"
     )
     assert config.read_bytes() == original
+
+
+def test_direct_native_preview_uses_one_fresh_evaluation(counted_native):
+    from acenix.native import Native
+
+    backend, store, commands = counted_native
+    transactions = Transactions(backend, store)
+    workflow = Native(backend, store, transactions)
+    workflow.edit(parse("hostname:after\npkg.hello:true\npkg.sl:true"))
+    commands.clear()
+    result = transactions.preview(workflow.plan(), full=False)
+    assert result["packages"]["add"] == ["hello", "sl"]
+    assert result["change_count"] == 3
+    assert len([command for command in commands if "--eval" in command]) == 1
+    assert result["system_evaluated"] is False
+    backend.target.config.write_text(
+        backend.target.config.read_text().replace('"after"', '"manually-edited"')
+    )
+    result = transactions.preview(workflow.plan(), full=False)
+    assert (
+        next(row for row in result["values"] if row["option"] == "networking.hostName")[
+            "requested"
+        ]
+        == "manually-edited"
+    )
+    assert any("External native" in risk for risk in result["high_impact"])
+
+
+def test_direct_native_full_check_preserves_global_assertions(counted_native):
+    from acenix.native import Native
+
+    backend, store, commands = counted_native
+    config = backend.target.config
+    config.write_text(
+        config.read_text().replace(
+            'networking.hostName = "before";',
+            'networking.hostName = "before"; assertions = [ { assertion = false; message = "ACENIX_NATIVE_ASSERTION"; } ];',
+        )
+    )
+    transactions = Transactions(backend, store)
+    workflow = Native(backend, store, transactions)
+    assert (
+        transactions.preview(workflow.plan(), full=False)["system_evaluated"] is False
+    )
+    with pytest.raises(ToolError, match="ACENIX_NATIVE_ASSERTION"):
+        transactions.preview(workflow.plan(), full=True)

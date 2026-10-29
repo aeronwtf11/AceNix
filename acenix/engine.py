@@ -168,6 +168,11 @@ class Plan:
     rules_file: str | None = None
     rules_file_exists: bool | None = None
     next_commands: dict | None = None
+    native_mode: bool = False
+    native_pending: dict = field(default_factory=dict)
+    native_current: dict = field(default_factory=dict)
+    display_changes: dict = field(default_factory=dict)
+    configured_packages: int | None = None
 
     def public(self):
         sensitive = lambda path: bool(
@@ -185,20 +190,31 @@ class Plan:
             for row in self.values
         ]
         changes = []
-        for name, (before, after) in self.changes.items():
+        source_changes = self.display_changes if self.native_mode else self.changes
+        for name, (before, after) in source_changes.items():
             # Source diffs can contain secrets. They are deliberately returned
             # only for the explicitly requested preview, never written to logs.
-            diff = "".join(
-                difflib.unified_diff(
-                    before.decode().splitlines(True),
-                    after.decode().splitlines(True),
-                    fromfile=name,
-                    tofile=name + " (candidate)",
+            try:
+                diff = "".join(
+                    difflib.unified_diff(
+                        before.decode().splitlines(True),
+                        after.decode().splitlines(True),
+                        fromfile=name,
+                        tofile=name
+                        + (
+                            " (current native source)"
+                            if self.native_mode
+                            else " (candidate)"
+                        ),
+                    )
                 )
-            )
+            except UnicodeError:
+                diff = f"Binary source file changed: {name}\n"
             changes.append({"file": name, "diff": diff})
         return {
             "target": self.target,
+            "workflow": "native" if self.native_mode else "legacy-rules",
+            "configured_packages": self.configured_packages,
             "rules_file": self.rules_file,
             "rules_file_exists": self.rules_file_exists,
             "next_commands": self.next_commands,
@@ -207,7 +223,7 @@ class Plan:
             "packages": self.packages,
             "warnings": self.warnings,
             "high_impact": self.high_impact,
-            "rebuild_required": bool(changes),
+            "rebuild_required": bool(changes) or self.native_mode,
             "validation": (
                 "candidate evaluated"
                 if self.evaluated and self.system_evaluated

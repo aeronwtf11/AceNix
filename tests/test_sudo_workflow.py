@@ -94,7 +94,7 @@ def sudo_workflow(tmp_path, monkeypatch):
         for name in ("SUDO_UID", "SUDO_GID", "SUDO_USER", "SUDO_COMMAND"):
             environment.pop(name, None)
         result = subprocess.run(
-            [executable, *arguments, "--json"],
+            [executable, "--rules", str(caller_rules), *arguments, "--json"],
             env=environment,
             capture_output=True,
             text=True,
@@ -125,7 +125,7 @@ def test_plain_user_install_then_sudo_preview_and_apply_use_same_requests(
     assert staged["rules"] == str(workflow.caller_rules)
     rule_bytes = workflow.caller_rules.read_bytes()
 
-    assert main(["preview", "--json"]) == 0
+    assert main(["--rules", str(workflow.caller_rules), "preview", "--json"]) == 0
     preview = json.loads(capsys.readouterr().out)
     assert preview["packages"]["add"] == packages
     saved_preview = json.loads(
@@ -152,7 +152,19 @@ def test_plain_user_install_then_sudo_preview_and_apply_use_same_requests(
 
     monkeypatch.setattr(NixOS, "build", stop_before_build)
     monkeypatch.setattr(NixOS, "activate", unexpected_activation)
-    assert main(["apply", "--mode", "build", "--json"]) == 3
+    assert (
+        main(
+            [
+                "--rules",
+                str(workflow.caller_rules),
+                "apply",
+                "--mode",
+                "build",
+                "--json",
+            ]
+        )
+        == 3
+    )
     error = json.loads(capsys.readouterr().err)
     assert "TEST_STOP_BEFORE_ACTUAL_SYSTEM_BUILD" in error["error"]
     assert built_requests == packages
@@ -175,12 +187,13 @@ def test_sudo_legacy_staging_remains_writable_to_the_real_caller(sudo_workflow, 
     original = b"# Existing caller requests\npkg.sl:true\n"
     legacy.write_bytes(original)
 
-    assert main(["install", "hello", "--json"]) == 0
+    assert main(["--rules", str(legacy), "install", "hello", "--json"]) == 0
     staged = json.loads(capsys.readouterr().out)
-    assert staged["rules"] == str(workflow.caller_rules)
-    assert workflow.caller_rules.stat().st_uid == workflow.uid
-    assert legacy.read_bytes() == original
+    assert staged["rules"] == str(legacy)
+    assert legacy.stat().st_uid == workflow.uid
+    assert {rule.key for rule in load(legacy)} == {"pkg.sl", "pkg.hello"}
 
+    workflow.caller_rules.write_bytes(legacy.read_bytes())
     result = workflow.user_command(["install", "btop"])
     assert result["rules"] == str(workflow.caller_rules)
     assert {rule.key for rule in load(workflow.caller_rules)} == {
@@ -188,4 +201,4 @@ def test_sudo_legacy_staging_remains_writable_to_the_real_caller(sudo_workflow, 
         "pkg.hello",
         "pkg.btop",
     }
-    assert legacy.read_bytes() == original
+    assert {rule.key for rule in load(legacy)} == {"pkg.sl", "pkg.hello"}

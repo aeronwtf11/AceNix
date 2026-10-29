@@ -17,6 +17,7 @@ from .errors import (
     ActivationCompletedError,
 )
 from .nixos import NixOS
+from .native import DEFAULT_OPTIONS, review_native, baseline_backup, activation_baseline
 from .storage import atomic_write, digest, now, safe_path
 
 
@@ -62,6 +63,14 @@ class Transactions:
 
     def validate(self, plan, target, *, full=True):
         candidate = NixOS(target, runner=self.backend.run)
+        if plan.native_mode:
+            data = candidate.native_data(
+                plan.native_pending.get("values") or DEFAULT_OPTIONS,
+                plan.native_pending.get("packages", {}),
+                full=full,
+            )
+            review_native(plan, data)
+            return plan
         for relative in plan.changes:
             self.backend.run(
                 ["nix-instantiate", "--parse", str(target.root / relative)]
@@ -190,7 +199,7 @@ class Transactions:
             }
             confirm(plan.public(), mode)
             self.unchanged(plan)
-            if (
+            if rules_path is not None and (
                 digest(rules_path.read_bytes() if rules_path.exists() else b"")
                 != plan.rules_hash
             ):
@@ -198,7 +207,13 @@ class Transactions:
                     "Rule file changed during candidate build; run preview again."
                 )
             self.progress("Creating backups")
-            backup = self._backup(plan, system, mode)
+            backup = self._backup(
+                baseline_backup(plan, self.backend.target.root)
+                if plan.native_mode
+                else plan,
+                system,
+                mode,
+            )
             committed = []
             activated = False
             activation_started = False
@@ -240,6 +255,9 @@ class Transactions:
                         "last_system": system,
                     }
                 )
+                if plan.native_mode:
+                    state.pop("native_pending", None)
+                    state["native_baseline"] = activation_baseline(plan, backup["id"])
                 self.store.write("state.json", state)
                 self.store.write("preview.json", {})
                 self.store.history(
@@ -369,7 +387,7 @@ class Transactions:
             "completed",
             "recovery-required",
             "sources-restored",
-        } or data["mode"] not in {"test", "boot", "switch"}:
+        } or data["mode"] not in {"edit", "test", "boot", "switch"}:
             raise ValidationError(f"Unknown backup transaction state: {path}")
         for name, hashes in data["files"].items():
             relative = Path(name)

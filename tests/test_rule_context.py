@@ -209,7 +209,7 @@ def test_human_preview_distinguishes_user_and_administrator_rule_documents():
 
 
 @pytest.mark.parametrize("output_flags", [[], ["--json"], ["--quiet"]])
-def test_missing_default_is_visible_without_creating_a_rule_document(
+def test_native_default_ignores_rule_documents_without_creating_them(
     context, monkeypatch, capsys, output_flags
 ):
     selected = context.config_home / "acenix/config.ace"
@@ -238,15 +238,15 @@ def test_missing_default_is_visible_without_creating_a_rule_document(
     output = capsys.readouterr()
     if output_flags == ["--json"]:
         public = json.loads(output.out)
-        assert public["rules_file"] == str(selected)
-        assert public["rules_file_exists"] is False
+        assert public["workflow"] == "native"
+        assert public["rules_file"] is None
+        assert public["rules_file_exists"] is None
         assert output.err == ""
     elif output_flags == ["--quiet"]:
         assert output.out == output.err == ""
     else:
-        assert "Rules file" in output.out
-        assert str(selected) in "".join(output.out.split())
-        assert "not created; no saved requests" in " ".join(output.out.split())
-        assert "Reading rules from" in output.err
+        assert "Native Configuration Preview" in output.out
+        assert "Rules file" not in output.out
+        assert "Reading native configuration" in output.err
     assert not selected.exists() and not context.config_home.exists()
     assert context.configuration.read_text() == "{}"
