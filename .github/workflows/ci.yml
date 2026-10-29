@@ -56,4 +56,8 @@ jobs:
                   with path.open(errors="replace") as stream:
                       tail = "".join(deque(stream, maxlen=120))
                   output.write(f"### {name}\n\n````text\n{tail}\n````\n\n")
+                  # Keep the useful error visible in the run's annotations too.
+                  # Escape workflow-command data so log text remains plain text.
+                  message = tail[-12000:].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                  print(f"::error title={name}::{message}")
           PY
