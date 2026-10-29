@@ -58,6 +58,8 @@ jobs:
                   output.write(f"### {name}\n\n````text\n{tail}\n````\n\n")
                   # Keep the useful error visible in the run's annotations too.
                   # Escape workflow-command data so log text remains plain text.
-                  message = tail[-12000:].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                  # GitHub truncates annotations around 4 KiB; retain the end
+                  # of the failure rather than losing it behind boot messages.
+                  message = tail[-3000:].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
                   print(f"::error title={name}::{message}")
           PY
