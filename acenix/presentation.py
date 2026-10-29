@@ -226,6 +226,7 @@ def preview(terminal, value, details=False):
         row
         for row in value["values"]
         if not row.get("changed", row["current"] != row["requested"])
+        and (not native or row.get("comparison_known", True))
     ]
     services = [row for row in changed if row["option"].endswith(".enable")]
     system = [row for row in changed if row not in services]
@@ -244,6 +245,15 @@ def preview(terminal, value, details=False):
             terminal.text(
                 f"{marker} {display_key(row['option'])}: {readable(row['current'])} {arrow} {readable(row['requested'])}"
             )
+    unknown = [
+        row
+        for row in value["values"]
+        if native and row.get("comparison_known") is False
+    ]
+    if unknown:
+        terminal.section("Current native settings")
+        for row in unknown if terminal.all_rows else unknown[:6]:
+            terminal.text(f"{display_key(row['option'])}: {readable(row['requested'])}")
     packages = value["packages"]
     if unchanged:
         terminal.section("Already matches")
@@ -270,10 +280,12 @@ def preview(terminal, value, details=False):
     )
     terminal.pairs(
         [
-            ("Changes", count),
+            ("Tracked changes" if native else "Changes", count),
             (
                 "Unchanged",
-                f"{len(unchanged) + len(packages.get('already_present', []))} "
+                "No recorded comparison baseline"
+                if native and not value.get("comparison_available", True)
+                else f"{len(unchanged) + len(packages.get('already_present', []))} "
                 + ("tracked" if native else "staged")
                 + " settings/packages"
                 + (

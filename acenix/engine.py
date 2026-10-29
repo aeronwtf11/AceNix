@@ -215,6 +215,9 @@ class Plan:
             "target": self.target,
             "workflow": "native" if self.native_mode else "legacy-rules",
             "configured_packages": self.configured_packages,
+            "comparison_available": bool(self.native_pending)
+            if self.native_mode
+            else True,
             "rules_file": self.rules_file,
             "rules_file_exists": self.rules_file_exists,
             "next_commands": self.next_commands,

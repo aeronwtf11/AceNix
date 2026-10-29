@@ -180,3 +180,24 @@ def test_native_activation_retains_source_baseline_and_does_not_write_sources(
     config.write_text(config.read_text() + "# manually edited after activation\n")
     assert native.plan().display_changes[config.name][0] == saved
     assert "External native" in native.plan().high_impact[0]
+
+
+def test_first_native_preview_does_not_claim_a_source_or_runtime_comparison():
+    plan = Plan("native", {}, native_mode=True)
+    review_native(
+        plan,
+        {
+            "values": {"networking.hostName": "configured"},
+            "packages": {},
+            "installed": [],
+            "warnings": [],
+            "derivation": None,
+        },
+    )
+    public = plan.public()
+    assert public["comparison_available"] is False
+    output = human(public, "preview")
+    assert "Current native settings".upper() in output
+    assert "ALREADY MATCHES" not in output
+    assert "No recorded comparison baseline" in output
+    assert "compared with the saved source baseline" not in output

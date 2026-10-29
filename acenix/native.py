@@ -29,6 +29,7 @@ def review_native(plan, data):
             "current": before.get(path, value),
             "requested": value,
             "source": "native NixOS configuration",
+            "comparison_known": path in before,
         }
         for path, value in data["values"].items()
     ]
