@@ -27,8 +27,9 @@ from .presentation import Terminal, failure, human
 from .profiles import Profiles
 from .storage import Store, atomic_write, digest, safe_path
 from .transactions import Transactions
+from .updates import Updates, discover_update
 
-COMMANDS = "help status get set setr install remove update enable disable packages services service options profile preview apply generations rollback history doctor backups recover completion setr:fastfetch".split()
+COMMANDS = "help status get set setr install remove update format enable disable packages services service options profile preview apply generations rollback history doctor backups recover completion setr:fastfetch".split()
 
 
 def xdg(name, fallback):
@@ -177,6 +178,7 @@ def parser():
 
     command("help", "Show command help").add_argument("topic", nargs="*")
     command("status", "Show configuration and rule status")
+    command("format", "Group config.ace sections without evaluating or changing NixOS")
     command("get", "Read actual evaluated NixOS values").add_argument(
         "option", nargs="?"
     )
@@ -227,10 +229,16 @@ def parser():
                 help="Only stage the profile; do not activate",
             )
             apply_flags(child)
-    command("preview", "Evaluate a candidate and summarize changes").add_argument(
+    child = command("preview", "Check requested values and summarize changes")
+    child.add_argument(
         "--diff",
         action="store_true",
         help="Include detailed native file diffs (may contain sensitive values)",
+    )
+    child.add_argument(
+        "--check",
+        action="store_true",
+        help="Also evaluate the full NixOS system derivation and global assertions",
     )
     apply_flags(
         command("apply", "Build and explicitly activate a validated transaction")
@@ -246,7 +254,13 @@ def parser():
     child.add_argument("backup")
     confirmation_flags(child)
     command("doctor", "Run read-only diagnostics")
-    confirmation_flags(command("update", "Update native inputs without activation"))
+    child = command("update", "Update NixOS and all declared system packages")
+    apply_flags(child)
+    child.add_argument(
+        "--inputs-only",
+        action="store_true",
+        help="Only refresh the channel or flake.lock; do not rebuild or activate",
+    )
     command("completion", "Print shell completion setup").add_argument(
         "shell", choices=["bash", "zsh", "fish"]
     )
@@ -348,6 +362,20 @@ def dispatch(args):
         rules.require_document(args.rules)
     if command == "history":
         return store.read("history.json", [])
+    if command == "format":
+        rules.require_document(args.rules)
+        with store.lock():
+            before = args.rules.read_bytes()
+            data = rules.group_sections(before.decode()).encode()
+            if data != before:
+                write_rule_document(args, data, before)
+                store.write("preview.json", {})
+                store.history({"operation": "format", "result": "formatted"})
+            return {
+                "result": "formatted",
+                "rules": str(args.rules),
+                "changed": data != before,
+            }
     if command == "setr:fastfetch":
         with store.lock():
             extra = Fastfetch(xdg("XDG_CONFIG_HOME", ".config"), store)
@@ -373,7 +401,8 @@ def dispatch(args):
                 return profiles.create(args.name, args.file.read_text())
             if args.action == "export":
                 return profiles.export(args.name, args.file)
-    backend = NixOS(discover(args.config, args.flake, args.host, args.module))
+    discovery = discover_update if command == "update" else discover
+    backend = NixOS(discovery(args.config, args.flake, args.host, args.module))
 
     target, transactions = (
         backend.target,
@@ -432,11 +461,12 @@ def dispatch(args):
     if command == "backups":
         return transactions.backups()
     if command == "status":
-        configured = backend.get("networking.hostName")
+        overview = backend.overview()
+        configured = overview.pop("hostname")
         runtime = os.uname().nodename if Path("/etc/NIXOS").exists() else None
         return {
             "version": __version__,
-            **backend.overview(),
+            **overview,
             "target": target.identity,
             "hostname": configured,
             "runtime_hostname": runtime,
@@ -454,31 +484,11 @@ def dispatch(args):
         if command == "rollback":
             return rollback(backend, store, args.generation, args.mode, authorization)
         if command == "update":
-            authorization(
-                {
-                    "target": target.identity,
-                    "action": "Update flake.lock"
-                    if target.flake
-                    else "Update channels for the current user",
-                    "note": "Inputs change, but no system activation occurs.",
-                },
-                "update",
+            return Updates(backend, store, progress=progress).run(
+                mode=args.mode,
+                inputs_only=args.inputs_only,
+                confirm=authorization,
             )
-            if target.flake:
-                data = (target.flake / "flake.lock").read_bytes()
-                backup = store.root / ("flake-lock-" + digest(data) + ".json")
-                if not backup.exists():
-                    atomic_write(backup, data)
-            updates = backend.update()
-            store.write("preview.json", {})
-            store.history(
-                {"operation": "update", "result": "updated", "target": target.identity}
-            )
-            return {
-                "result": "updated",
-                "activation_performed": False,
-                "updates": updates,
-            }
         if command in {"set", "setr", "install", "remove", "enable", "disable"}:
             if command == "set":
                 value = rules.parse_value(args.value)
@@ -562,7 +572,7 @@ def dispatch(args):
             plan.rules_file_exists = args.rules.is_file()
             plan.next_commands = management_commands(args)
             if command == "preview":
-                return transactions.preview(plan)
+                return transactions.preview(plan, full=args.check)
             return transactions.apply(
                 plan, mode=args.mode, confirm=authorization, rules_path=args.rules
             )

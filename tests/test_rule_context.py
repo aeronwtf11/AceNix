@@ -105,6 +105,7 @@ def test_status_can_inspect_native_configuration_with_a_missing_rule_document(
             target=target,
             get=get,
             overview=lambda: {
+                "hostname": "native-host",
                 "nixos_release": "26.05",
                 "desktop": [],
                 "network_manager": None,
@@ -225,7 +226,7 @@ def test_missing_default_is_visible_without_creating_a_rule_document(
         def __init__(self, backend, store, progress):
             pass
 
-        def preview(self, plan):
+        def preview(self, plan, **kwargs):
             return plan.public()
 
     monkeypatch.setattr(

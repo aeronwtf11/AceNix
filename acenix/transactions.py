@@ -60,17 +60,19 @@ class Transactions:
             self.unchanged(plan)
             yield self.backend.target.relocated(root)
 
-    def validate(self, plan, target):
+    def validate(self, plan, target, *, full=True):
         candidate = NixOS(target, runner=self.backend.run)
         for relative in plan.changes:
             self.backend.run(
                 ["nix-instantiate", "--parse", str(target.root / relative)]
             )
         wanted = [*plan.packages["add"], *plan.packages["already_present"]]
+        verification_options = {} if full else {"full": False}
         verified = candidate.verification_data(
             [row["option"] for row in plan.values],
             [*wanted, *plan.packages["remove"]],
             include_packages=any(plan.packages.values()),
+            **verification_options,
         )
         for row in plan.values:
             actual = verified["values"][row["option"]]
@@ -80,6 +82,7 @@ class Transactions:
                 )
         plan.derivation = verified["derivation"]
         plan.evaluated = True
+        plan.system_evaluated = full
         plan.warnings.extend(verified["warnings"])
         current = verified["installed"]
         installed = {p.get("storePath") for p in current if isinstance(p, dict)}
@@ -98,10 +101,13 @@ class Transactions:
                 )
         return plan
 
-    def preview(self, plan):
+    def preview(self, plan, *, full=True):
         with self.candidate(plan) as target:
             self.progress("Evaluating NixOS")
-            self.validate(plan, target)
+            if full:
+                self.validate(plan, target)
+            else:
+                self.validate(plan, target, full=False)
         self.store.write(
             "preview.json",
             {
@@ -145,7 +151,11 @@ class Transactions:
             self.validate(plan, target)
             try:
                 self.progress("Building the system")
-                system = self.backend.build(target)
+                system = (
+                    self.backend.build(target, derivation=plan.derivation)
+                    if plan.derivation is not None
+                    else self.backend.build(target)
+                )
             except ToolError:
                 self.store.history(
                     {

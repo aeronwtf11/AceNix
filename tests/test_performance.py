@@ -83,6 +83,7 @@ def test_candidate_verification_uses_one_fresh_evaluation(tmp_path, size):
     assert backend.verification_data(paths, packages, True) == answer
     assert len(commands) == 2
     assert all("--eval" in command for command in commands)
+    assert all("--read-write-mode" in command for command in commands)
 
 
 def test_batched_native_failures_are_not_recorded_as_success(tmp_path):
@@ -133,6 +134,60 @@ def test_successful_diagnostics_share_one_native_evaluation(tmp_path):
 
     assert backend.diagnostic_data() == answer
     assert len(commands) == 1
+
+
+def test_status_overview_includes_hostname_in_one_evaluation(tmp_path):
+    answer = {"hostname": "real-host", "nixos_release": "26.05", "desktop": []}
+    backend, commands = backend_with_replies(tmp_path, [answer])
+    assert backend.overview() == answer
+    assert len(commands) == 1
+    assert 'hostname = read [ "networking" "hostName" ]' in commands[0][-1]
+
+
+def test_quick_candidate_check_avoids_toplevel_without_inventing_a_derivation(tmp_path):
+    answer = {
+        "values": {},
+        "packages": {},
+        "installed": [],
+        "derivation": None,
+        "warnings": [],
+    }
+    backend, commands = backend_with_replies(tmp_path, [answer])
+    assert backend.verification_data([], [], False, full=False)["derivation"] is None
+    expression = commands[0][-1]
+    assert "derivation = null" in expression
+    assert "system.build.toplevel.drvPath" not in expression
+
+
+def test_build_realizes_reviewed_derivation_without_repeating_nixos_evaluation(
+    tmp_path,
+):
+    config = tmp_path / "configuration.nix"
+    config.write_text("{}")
+    commands = []
+
+    def runner(argv, **kwargs):
+        commands.append(argv)
+        return "/nix/store/reviewed-system\n"
+
+    backend = NixOS(Target(config=config), runner)
+    derivation = "/nix/store/" + "a" * 32 + "-nixos-system-test.drv"
+    assert (
+        backend.build(backend.target, derivation=derivation)
+        == "/nix/store/reviewed-system"
+    )
+    assert len(commands) == 1 and commands[0][-1] == derivation + "^*"
+    assert "--expr" not in commands[0] and "nix-build" not in commands[0]
+
+
+@pytest.mark.parametrize(
+    "derivation", ["/tmp/fake.drv", "--impure", "/nix/store/not-a-hash.drv"]
+)
+def test_invalid_reviewed_derivations_are_rejected_before_build(tmp_path, derivation):
+    backend, commands = backend_with_replies(tmp_path, [])
+    with pytest.raises(ToolError, match="valid Nix store derivation"):
+        backend.build(backend.target, derivation=derivation)
+    assert commands == []
 
 
 @pytest.mark.parametrize(

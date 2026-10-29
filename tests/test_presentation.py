@@ -234,6 +234,33 @@ def test_terminal_color_and_accessibility(monkeypatch, plan):
     assert not Terminal(stream=TTY()).unicode
 
 
+def test_status_banner_is_ascii_and_interactive_only(monkeypatch):
+    monkeypatch.setenv("TERM", "xterm")
+    monkeypatch.setenv("NO_COLOR", "1")
+    terminal = Terminal(stream=TTY())
+    terminal.brand()
+    banner = terminal.result()
+    assert "/ ___" in banner and "___|" in banner
+    banner.encode("ascii")
+    assert "\x1b" not in banner
+    for stream, ascii in [(io.StringIO(), False), (TTY(), True)]:
+        plain = Terminal(stream=stream, ascii=ascii)
+        plain.brand()
+        assert plain.result() == ""
+    monkeypatch.setenv("TERM", "dumb")
+    plain = Terminal(stream=TTY())
+    plain.brand()
+    assert plain.result() == ""
+
+
+def test_quick_preview_explains_what_has_and_has_not_been_checked(plan):
+    plan["validation"] = "candidate values evaluated"
+    text = human(plan, "preview")
+    assert "Requested values and packages checked" in text
+    assert "preview --check" in text and "always performed by apply" in text
+    assert "Successful (full system)" not in text
+
+
 def test_configuration_cannot_inject_terminal_controls():
     text = human({"hostname": "evil\x1b[2J\x07name"})
     assert "\x1b" not in text and "\x07" not in text

@@ -101,6 +101,18 @@ Diagnostics do not fix the machine automatically. Generation rollback, source
 recovery, updates and Fastfetch changes are separate explicit operations. The
 Fastfetch subsystem preserves ordinary modules and uses a recovery journal.
 
+System updates refresh the selected registered channel or local flake lock and
+then delegate to `nixos-rebuild switch` by default. Traditional targets explicitly
+disable flake autodetection; flake targets keep their selected host and disallow
+implicit lock rewrites during the rebuild. `--inputs-only` retains input-only
+updates, and build/test/boot modes retain native rebuild semantics. Updates do not
+load pending rules, rewrite configuration modules or replace managed-package
+ownership records. Source refresh invalidates cached previews even when a later
+step fails. Flake locks are backed up before refreshing; failures retain changed
+inputs, record the failed stage and distinguish potentially partial activation
+from a completed operation whose history write failed. Personal profiles are
+outside the system rebuild's scope.
+
 Generation inspection reads native `system-N-link` symlinks and their timestamps;
 it never asks `nix-env --list-generations` to take a writable system-profile lock.
 Service discovery retains hidden compatibility names as unavailable without
@@ -112,6 +124,20 @@ formatting and table limits. Human previews keep source diffs behind `--diff`
 or `--verbose`; progress callbacks run immediately before actual transaction
 steps and are disabled for JSON and quiet mode. No progress percentage or
 diagnostic health value is simulated.
+
+The CLI's default preview verifies actual requested values and package membership
+in the copied candidate without forcing `system.build.toplevel`. `preview --check`
+and every apply force the full derivation and global assertions. Structured output
+distinguishes these levels; no persistent evaluation result is trusted as current.
+Apply realizes the freshly validated derivation directly instead of reevaluating
+the same NixOS modules inside a second build expression. Conflict checks and
+explicit activation confirmation remain in place. Status batches its hostname
+and overview in a single evaluation.
+
+Rule staging merges repeated section blocks in first-seen order and retains all
+requests and comments. The offline `format` command applies the same grouping
+without creating a NixOS backend. The three optional presentation learning
+exercises remain separate from the surrounding status banner and formatting.
 
 The generic backend handles static options and attrsOf submodule children. It
 does not claim to rewrite arbitrary functions, modules, dynamic keys, priorities,

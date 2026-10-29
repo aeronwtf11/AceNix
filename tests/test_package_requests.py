@@ -64,7 +64,7 @@ def installed_package(tmp_path):
     return backend, store, commands
 
 
-@pytest.mark.parametrize("operation", ["preview", "build"])
+@pytest.mark.parametrize("operation", ["preview", "quick-preview", "build"])
 def test_preview_rejects_dropping_an_existing_requested_package(
     installed_package, operation
 ):
@@ -81,8 +81,8 @@ def test_preview_rejects_dropping_an_existing_requested_package(
 
     with pytest.raises(ConflictError, match="hello.*not included"):
         transactions = Transactions(backend, store)
-        if operation == "preview":
-            transactions.preview(plan)
+        if operation in {"preview", "quick-preview"}:
+            transactions.preview(plan, full=operation == "preview")
         else:
             with store.lock():
                 transactions.apply(

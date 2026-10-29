@@ -162,6 +162,7 @@ class Plan:
     high_impact: list = field(default_factory=list)
     rules_hash: str = ""
     evaluated: bool = False
+    system_evaluated: bool = False
     derivation: str | None = None
     activation: dict | None = None
     rules_file: str | None = None
@@ -207,7 +208,14 @@ class Plan:
             "warnings": self.warnings,
             "high_impact": self.high_impact,
             "rebuild_required": bool(changes),
-            "validation": "candidate evaluated" if self.evaluated else "source plan",
+            "validation": (
+                "candidate evaluated"
+                if self.evaluated and self.system_evaluated
+                else "candidate values evaluated"
+                if self.evaluated
+                else "source plan"
+            ),
+            "system_evaluated": self.system_evaluated,
             "derivation": self.derivation,
             "activation": self.activation,
             "change_count": sum(

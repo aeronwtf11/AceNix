@@ -259,7 +259,7 @@ pkgs.testers.runNixOSTest {
         command("setr hostname:acenix-a")
         command("enable ssh")
         command("install hello")
-        preview = command("preview")
+        preview = command("preview --check")
         assert preview["validation"] == "candidate evaluated", preview
         assert any(row["file"] == "services.nix" for row in preview["files"]), preview
         before = sources()
@@ -356,7 +356,7 @@ pkgs.testers.runNixOSTest {
         ${lib.optionalString (!flakeMode) ''
           machine.succeed("install -m 600 /dev/null /etc/nixos/configuration.nix.save")
           before, running, boot_profile = sources(), current(), profile()
-          output = machine.succeed("su nobody -s /bin/sh -c " + shlex.quote(read_cli + "preview --json"))
+          output = machine.succeed("su nobody -s /bin/sh -c " + shlex.quote(read_cli + "preview --check --json"))
           preview = json.loads(output)
           assert preview['validation'] == 'candidate evaluated', preview
           assert any('configuration.nix.save' in warning for warning in preview['warnings']), preview
@@ -374,8 +374,9 @@ pkgs.testers.runNixOSTest {
         assert command('doctor')['healthy'] is True
         running = current()
         ${lib.optionalString flakeMode ''
-          result = command("update" + authorization)
+          result = command("update --inputs-only" + authorization)
           assert result["result"] == "updated", result
+          assert result["activation_performed"] is False, result
           assert current() == running
         ''}
         ${lib.optionalString (!flakeMode) ''
@@ -390,10 +391,25 @@ pkgs.testers.runNixOSTest {
               channel_environment + "nix-channel --add file:///tmp/acenix-unrelated-unavailable.tar.gz acenix-unrelated",
           )
           cli = cli.replace("NIX_PATH=nixpkgs=${nixpkgsPath}", "NIX_PATH=nixpkgs=/root/.nix-defexpr/channels/acenix-test")
-          result = command("update" + authorization)
+          result = command("update --inputs-only" + authorization)
           assert result['updates']['channels'] == ['acenix-test'], result
+          assert result["activation_performed"] is False, result
           machine.succeed("test -e /root/.nix-defexpr/channels/acenix-unrelated")
           assert current() == running
         ''}
+
+    with subtest("native update build and switch preserve staged requests and configuration"):
+        command("setr hostname:pending-after-update")
+        before, running, boot_profile = sources(), current(), profile()
+        staged = machine.succeed("sha256sum /root/acenix.sys").strip()
+        result = command("update --mode build" + authorization)
+        assert result["mode"] == "build" and result["activation_performed"] is False, result
+        assert sources() == before and current() == running and profile() == boot_profile
+        result = command("update" + authorization)
+        assert result["mode"] == "switch" and result["activation_performed"] is True, result
+        assert sources() == before and current() == running and profile() == running
+        assert machine.succeed("sha256sum /root/acenix.sys").strip() == staged
+        assert machine.succeed("cat /etc/hostname").strip() == "acenix-c"
+        assert result["staged_rules_applied"] is False, result
   '';
 }

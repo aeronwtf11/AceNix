@@ -114,7 +114,7 @@ class Target:
                 "--no-write-lock-file",
             ]
         else:
-            args += ["-I", f"nixos-config={self.config}"]
+            args += ["--no-flake", "-I", f"nixos-config={self.config}"]
         return args
 
 
@@ -123,7 +123,7 @@ class NixOS:
         self.target, self.run = target, runner
         self._options = None
 
-    def eval(self, body, *, target=None):
+    def eval(self, body, *, target=None, read_write=False):
         target = target or self.target
         expression = f"""let
           n = {target.expression()};
@@ -158,6 +158,7 @@ class NixOS:
                 "--json",
                 "--extra-experimental-features",
                 "nix-command flakes",
+                *(["--read-write-mode"] if read_write else []),
                 "--expr",
                 expression,
             ]
@@ -211,6 +212,7 @@ class NixOS:
             in if value.success then value.value else null;
           enabled = path: read path == true;
         in {
+          hostname = read [ "networking" "hostName" ];
           nixos_release = read [ "system" "nixos" "release" ];
           desktop = lib.optional (enabled [ "services" "desktopManager" "plasma6" "enable" ]
             || enabled [ "services" "xserver" "desktopManager" "plasma5" "enable" ]) "KDE Plasma"
@@ -368,8 +370,6 @@ class NixOS:
         result = self.eval(f"""let metadata = {metadata}; in {{
           info = encodeAttrs metadata;
           current = encodeAttrs {current};
-          validated = if builtins.any (o: o.readOnly) (builtins.attrValues metadata)
-            then [] else ({self._type_overlay(values)});
           packages = encodeAttrs {catalogue};
           installed = {"render n.config.environment.systemPackages" if packages else "[]"};
           flake_source = {flake_source};
@@ -377,7 +377,7 @@ class NixOS:
         self._writable(result["info"])
         return result
 
-    def verification_data(self, paths, packages, include_packages):
+    def verification_data(self, paths, packages, include_packages, *, full=True):
         """Reevaluate the candidate's effective values, assertions and packages."""
         values = self._attributes(
             {
@@ -388,13 +388,16 @@ class NixOS:
         catalogue = self._attributes(
             {name: self._package_expression(name) for name in packages}
         )
-        return self.eval(f"""{{
+        return self.eval(
+            f"""{{
           values = encodeAttrs {values};
           packages = encodeAttrs {catalogue};
           installed = {"render n.config.environment.systemPackages" if include_packages else "[]"};
-          derivation = n.config.system.build.toplevel.drvPath;
+          derivation = {"n.config.system.build.toplevel.drvPath" if full else "null"};
           warnings = n.config.warnings;
-        }}""")
+        }}""",
+            read_write=full,
+        )
 
     def check(self, target=None):
         # Evaluating the real system derivation forces assertions and module type
@@ -407,8 +410,22 @@ class NixOS:
           package = ({self._package_expression("hello")});
         }}""")
 
-    def build(self, target):
-        if target.flake:
+    def build(self, target, *, derivation=None):
+        if derivation is not None:
+            if not re.fullmatch(r"/nix/store/[a-z0-9]{32}-[^/\s]+\.drv", derivation):
+                raise ToolError(
+                    "Evaluation did not return a valid Nix store derivation."
+                )
+            args = [
+                "nix",
+                "build",
+                "--extra-experimental-features",
+                "nix-command",
+                "--no-link",
+                "--print-out-paths",
+                derivation + "^*",
+            ]
+        elif target.flake:
             args = [
                 "nix",
                 "build",

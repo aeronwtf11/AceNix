@@ -303,8 +303,50 @@ def load(path: Path, *, required=False):
     )
 
 
+def group_sections(text: str) -> str:
+    """Merge repeated sections in first-seen order, retaining rules and comments."""
+    parse(text)
+    preamble, sections = [], {}
+    current = preamble
+    repeated = False
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            name = stripped[1:-1].strip()
+            if name in sections:
+                repeated = True
+                current = sections[name][1]
+                # A blank left at the old section boundary is spacing between
+                # sections, not spacing between each package in the new group.
+                while current and not current[-1].strip():
+                    current.pop()
+            else:
+                current = []
+                sections[name] = (line, current)
+        else:
+            if current or stripped:
+                current.append(line)
+    if not repeated:
+        return text
+
+    def body(lines):
+        lines = list(lines)
+        while lines and not lines[-1].strip():
+            lines.pop()
+        return "".join(lines).rstrip("\r\n")
+
+    blocks = [body(preamble)] if body(preamble) else []
+    blocks.extend(
+        header.rstrip("\r\n") + "\n" + body(lines)
+        for header, lines in sections.values()
+    )
+    result = "\n\n".join(blocks).rstrip("\r\n") + "\n"
+    parse(result)
+    return result
+
+
 def update(text: str, key: str, value, section="options") -> str:
-    """Change only the requested rule line, preserving comments and other lines."""
+    """Update a rule and keep a single group per section without losing comments."""
     existing = parse(text)
     if key not in ALIASES and key not in {"desktop", "user", "fastfetch"}:
         key = validate_attr(key)
@@ -320,6 +362,6 @@ def update(text: str, key: str, value, section="options") -> str:
         if lines and not lines[-1].endswith("\n"):
             lines[-1] += "\n"
         lines.extend([f"\n[{section}]\n", line])
-    result = "".join(lines)
+    result = group_sections("".join(lines))
     parse(result)
     return result

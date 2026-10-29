@@ -103,6 +103,26 @@ class Terminal:
             "",
         ]
 
+    def brand(self):
+        """Decorate interactive, wide terminals; keep logs and screen readers plain."""
+        if (
+            not self.stream.isatty()
+            or os.environ.get("TERM") == "dumb"
+            or self.width < 38
+            or not self.unicode
+        ):
+            return
+        self.lines.extend(
+            [
+                r"     _            _   _ _      ",
+                r"    / \   ___ ___| \ | (_)_  __",
+                r"   / _ \ / __/ _ \  \| | \ \/ /",
+                r"  / ___ \ (_|  __/ |\  | |>  < ",
+                r" /_/   \_\___\___|_| \_|_/_/\_\ ",
+                "",
+            ]
+        )
+
     def section(self, name):
         if self.lines and self.lines[-1]:
             self.lines.append("")
@@ -254,8 +274,10 @@ def preview(terminal, value, details=False):
             ),
             (
                 "Evaluation",
-                "Successful"
+                "Successful (full system)"
                 if value["validation"] == "candidate evaluated"
+                else "Requested values and packages checked"
+                if value["validation"] == "candidate values evaluated"
                 else "Not run yet",
             ),
             (
@@ -297,6 +319,10 @@ def preview(terminal, value, details=False):
             terminal.text("No file changes.")
     elif value["files"]:
         terminal.text("Inspect file changes: acenix preview --diff")
+    if value["validation"] == "candidate values evaluated":
+        terminal.text(
+            "Full system check: acenix preview --check (also always performed by apply)."
+        )
     terminal.lines.append("")
     terminal.text(
         "Review this plan before authorizing activation."
@@ -324,7 +350,48 @@ def human(
     terminal = Terminal(stream=stream, ascii=ascii, verbose=verbose, all_rows=all_rows)
     if isinstance(value, dict) and "rebuild_required" in value:
         preview(terminal, value, details)
+    elif command == "update" or (
+        isinstance(value, dict) and value.get("operation") == "update"
+    ):
+        planned = value.get("result") == "planned"
+        mode = value["mode"]
+        terminal.heading("NixOS Update" if planned else "Update Complete")
+        messages = {
+            "inputs-only": "Refresh package sources without building or activating a system."
+            if planned
+            else "Package sources refreshed. No system was built or activated.",
+            "build": "Refresh package sources and build updated NixOS without activation."
+            if planned
+            else "Updated NixOS and system packages built successfully. No system was activated.",
+            "test": "Refresh package sources, build and activate updated NixOS for this session."
+            if planned
+            else "Updated NixOS is active for this session. The next-boot generation was not changed.",
+            "boot": "Refresh package sources, build and install updated NixOS for the next boot."
+            if planned
+            else "Updated NixOS is installed for the next boot. Reboot to use it.",
+            "switch": "Refresh package sources, then build and activate updated NixOS and system packages."
+            if planned
+            else "Native NixOS rebuild and activation completed. A reboot may be needed for kernel or boot changes.",
+        }
+        terminal.text(messages[mode])
+        terminal.pairs([("Target", value["target"]), ("Mode", mode)])
+        updates = value.get("updates", {})
+        if updates.get("channels"):
+            terminal.pairs([("Channels", ", ".join(updates["channels"]))])
+        if "changed" in updates:
+            terminal.pairs(
+                [("Flake lock changed", "Yes" if updates["changed"] else "No")]
+            )
+        if value.get("flake_lock_backup"):
+            terminal.pairs([("Previous flake.lock", value["flake_lock_backup"])])
+        terminal.text(
+            "Scope: declared NixOS system packages. Personal nix profiles, standalone Home Manager and Flatpak need their own updates."
+        )
+        terminal.text(
+            "Pending config.ace requests remain staged; use acenix apply for those changes."
+        )
     elif command == "status":
+        terminal.brand()
         terminal.heading("System Overview")
         terminal.pairs(
             [
@@ -608,6 +675,15 @@ def human(
         terminal.text(
             "Source recovery and system generation rollback are separate operations."
         )
+    elif isinstance(value, dict) and value.get("result") == "formatted":
+        terminal.heading("Rules Formatted")
+        terminal.text(
+            "Repeated sections grouped successfully."
+            if value["changed"]
+            else "Rule sections are already grouped."
+        )
+        terminal.pairs([("Rules file", value["rules"])])
+        terminal.text("Native configuration and the running system are unchanged.")
     elif isinstance(value, dict) and value.get("result") == "staged":
         terminal.heading("Changes Staged")
         if command in {"install", "remove"}:

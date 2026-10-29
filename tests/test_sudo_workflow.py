@@ -136,7 +136,7 @@ def test_plain_user_install_then_sudo_preview_and_apply_use_same_requests(
 
     built_requests = []
 
-    def stop_before_build(backend, target):
+    def stop_before_build(backend, target, **kwargs):
         candidate = NixOS(target, runner=backend.run).verification_data(
             [], packages, include_packages=True
         )

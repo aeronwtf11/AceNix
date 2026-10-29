@@ -95,10 +95,13 @@ existing rule document, including a legacy `config.sys`; no `--rules` argument
 is needed for this workflow. Preview and apply display the selected file.
 
 `set`, `setr`, `install`, `remove`, `enable` and `disable` stage rules. **They do
-not activate or immediately rewrite configuration.nix.** `preview` evaluates an
-isolated candidate and summarizes changed and unchanged settings, packages,
-services, impact, rebuilds and possible reboots. Use `acenix preview --diff` for
-the full native file changes. Apply builds that candidate first.
+not activate or immediately rewrite configuration.nix.** `preview` checks the
+requested options and package membership in an isolated native candidate and
+summarizes the changes. It avoids evaluating the complete system derivation by
+default. Use `acenix preview --check` for the full NixOS system and global
+assertions, or `acenix preview --diff` for file changes. The output and JSON state
+which checks ran. Apply always performs the full check and builds the exact
+validated derivation without evaluating NixOS again for the build.
 `--mode build` leaves native files and runtime unchanged. `test`, `boot` and
 `switch` commit the reviewed source files and invoke native activation, with
 explicit confirmation. Boot/network/authentication changes need an additional
@@ -145,6 +148,32 @@ The next staging command writes `config.ace` and retains the original
 `config.sys` unchanged as a backup. If both exist, `config.ace` is used. Inspection
 commands, including `preview` and `doctor`, do not migrate files, and an explicit
 `--rules /path/config.sys` continues using that exact path.
+
+Staging keeps each section together, with a single `[packages]` and `[options]`
+heading. Existing repeated sections are merged the next time you save a request,
+preserving requests and comments. To tidy an existing document immediately:
+
+```sh
+acenix format
+```
+
+This command only formats your rule document; it needs no Nix evaluation and
+does not change the native NixOS configuration. For example:
+
+```ini
+[packages]
+pkg.htop:true
+pkg.librewolf:true
+pkg.sl:true
+
+[options]
+hardware.bluetooth.enable:true
+services.openssh.enable:true
+```
+
+`acenix status` uses one native evaluation for the system overview. Interactive
+terminals show an ASCII AceNix banner; redirected output, narrow/dumb terminals
+and `--ascii` use the compact presentation. JSON stays machine-readable.
 
 With a validated sudo caller, an existing caller-owned rule document is selected
 automatically. This applies to commands that read or stage rules, and works with
@@ -254,7 +283,7 @@ acenix packages info firefox
 acenix packages list
 acenix install git vim
 acenix remove git
-acenix update
+sudo acenix update
 acenix services search ssh
 acenix enable ssh
 acenix disable ssh
@@ -268,12 +297,50 @@ package identity uses real store paths. Only expressions AceNix added may be
 removed. Packages declared elsewhere are preserved, including shared package
 definitions. An option module must already provide `pkgs` in its function arguments.
 
-`update` updates a locked flake or the registered channel supplying the target's
-Nixpkgs; it does not
-activate a new system. Flake lockfiles are backed up. Channel updates must run as
-the account whose channels the NixOS target uses, normally root. A pinned custom
-source requires its own explicit update; unrelated channels are left alone. Review their
-effects with preview and apply afterward.
+### Update NixOS and system packages
+
+```sh
+sudo acenix update
+```
+
+Review the summary and confirm. AceNix refreshes the registered NixOS channel
+or the locked flake inputs, then runs native `nixos-rebuild switch`. This updates
+NixOS and all packages declared by that configuration, including packages added
+through AceNix and previously applied. Nix builds or downloads the changed packages
+individually in its store and activates one consistent system generation. It reuses
+unchanged packages; packages pinned to a particular version stay pinned. The command
+stays on your selected channel/release; it does not move a stable installation to
+another NixOS release or unstable. Some kernel and boot changes require a reboot.
+
+Pending `config.ace` requests are not applied by `update`; use `sudo acenix apply`
+to install newly staged packages or settings. Personal `nix profile` / `nix-env`
+installations, standalone Home Manager and Flatpak applications use separate
+update commands. Declarative Home Manager configurations integrated into the NixOS
+rebuild follow that configuration's inputs as usual.
+
+For a flake in `/etc/nixos`, `update` detects it and uses the current machine's
+hostname as the `nixosConfigurations` attribute. A different attribute or location
+can be selected explicitly:
+
+```sh
+sudo acenix --flake /etc/nixos --host my-host update
+sudo acenix update --mode boot       # Install for the next boot
+sudo acenix update --mode build      # Refresh sources and build; no activation
+sudo acenix update --inputs-only     # Previous behavior: refresh sources only
+```
+
+The update asks for explicit authorization before changing sources. Automation can
+use `--yes --allow-high-impact`; `--json`, `--quiet` and `--verbose` are supported.
+Flake lockfiles are backed up in AceNix's private state directory. Failed updates
+are recorded and do not report success; changed inputs are retained for inspection
+and retry. A failed native activation can leave runtime partially changed, just as
+with a direct `nixos-rebuild`; inspect `acenix generations` before choosing rollback.
+No `configuration.nix` or rule document is rewritten by the update command.
+
+Only the registered channel supplying the selected target's Nixpkgs is refreshed;
+unrelated channels are preserved. Channel updates run as the account owning the
+system channel, normally root. A pinned custom source requires its own explicit
+update rather than silently refreshing an unrelated channel.
 
 Service aliases include ssh/sshd, printing and bluetooth; other service names
 resolve to native `services.NAME.enable` options. Service status reports the

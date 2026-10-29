@@ -6,10 +6,10 @@ import os
 import pytest
 
 from acenix.engine import Engine
-from acenix.errors import ValidationError
+from acenix.errors import ToolError, ValidationError
 from acenix.nixos import NixOS, Target, run
 from acenix.rules import parse
-from acenix.storage import Store
+from acenix.storage import Store, digest
 from acenix.transactions import Transactions
 
 pytestmark = [
@@ -134,6 +134,76 @@ def test_native_batched_validation_refuses_readonly_without_native_writes(
         backend.validate({"system.build.toplevel": "must-not-be-written"})
 
     assert len([command for command in commands if "--eval" in command]) == 1
+    assert backend.target.config.read_bytes() == original
+
+
+def test_quick_preview_checks_values_and_full_check_still_forces_global_assertions(
+    counted_native,
+):
+    backend, store, commands = counted_native
+    config = backend.target.config
+    config.write_text(
+        config.read_text().replace(
+            'networking.hostName = "before";',
+            'networking.hostName = "before"; assertions = [ { assertion = false; message = "ACENIX_GLOBAL_ASSERTION"; } ];',
+        )
+    )
+    original = config.read_bytes()
+    plan = Engine(backend).plan(parse("hostname:after"), {})
+    transactions = Transactions(backend, store)
+    preview = transactions.preview(plan, full=False)
+    assert preview["validation"] == "candidate values evaluated"
+    assert preview["system_evaluated"] is False and preview["derivation"] is None
+    with pytest.raises(ToolError, match="ACENIX_GLOBAL_ASSERTION"):
+        transactions.preview(plan, full=True)
+    assert config.read_bytes() == original
+    assert not any(command[0] == "nix" and "build" in command for command in commands)
+
+
+def test_quick_preview_still_rejects_wrong_native_option_types(counted_native):
+    backend, store, _ = counted_native
+    original = backend.target.config.read_bytes()
+    plan = Engine(backend).plan(parse('hardware.bluetooth.enable:"not-a-boolean"'), {})
+    with pytest.raises(ToolError, match="not of type"):
+        Transactions(backend, store).preview(plan, full=False)
+    assert backend.target.config.read_bytes() == original
+
+
+def test_native_apply_passes_fresh_reviewed_derivation_directly_to_builder(
+    counted_native,
+):
+    backend, store, commands = counted_native
+    rules_file = store.root.parent / "config.ace"
+    rules_file.write_text("hostname:after\n")
+    plan = Engine(backend).plan(
+        parse(rules_file.read_text()), {}, digest(rules_file.read_bytes())
+    )
+    original = backend.target.config.read_bytes()
+    runner = backend.run
+    attempted = []
+
+    def stop_build(argv, **kwargs):
+        if argv[0] == "nix" and "build" in argv:
+            attempted.append(argv)
+            # --eval ordinarily computes a drvPath without registering its
+            # recipe. Realization must receive a derivation that actually exists.
+            run(["nix-store", "--query", "--hash", argv[-1].removesuffix("^*")])
+            raise ToolError("STOP_BEFORE_REAL_BUILD")
+        return runner(argv, **kwargs)
+
+    backend.run = stop_build
+    with pytest.raises(ToolError, match="STOP_BEFORE_REAL_BUILD"):
+        Transactions(backend, store).apply(
+            plan, mode="build", confirm=lambda *args: None, rules_path=rules_file
+        )
+    assert len(attempted) == 1
+    assert attempted[0][-1] == plan.derivation + "^*"
+    assert "nixosConfigurations" not in " ".join(attempted[0])
+    assert len([command for command in commands if "--eval" in command]) == 2
+    assert (
+        "--read-write-mode"
+        in [command for command in commands if "--eval" in command][-1]
+    )
     assert backend.target.config.read_bytes() == original
 
 

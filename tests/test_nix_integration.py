@@ -103,7 +103,8 @@ def test_standalone_cli_previews_around_unreadable_backup(native, tmp_path):
     )
     assert result.returncode == 0, result.stderr
     data = json.loads(result.stdout)
-    assert data["validation"] == "candidate evaluated"
+    assert data["validation"] == "candidate values evaluated"
+    assert data["system_evaluated"] is False
     assert data["change_count"] == 1
     assert data["reboot_may_be_required"] is True
     assert backend.target.config.read_bytes() == before
@@ -202,7 +203,7 @@ def test_real_cli_stages_and_previews_without_native_writes(native, tmp_path, ca
     assert main(flags + ["setr", "hostname:cli-host", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["result"] == "staged"
     assert backend.get("networking.hostName") == "before"
-    assert main(flags + ["preview", "--json"]) == 0
+    assert main(flags + ["preview", "--check", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["validation"] == "candidate evaluated"
     previous = rules_file.read_bytes()
     assert (
@@ -408,8 +409,9 @@ def test_actual_competing_or_priority_definitions_are_refused(native, priority):
                 'networking.hostName = "before"; services.openssh.enable = false;',
             )
         )
-    expected = ToolError if priority else ConflictError
-    with pytest.raises(expected):
+    # Planning does not create a second forced module graph just for type
+    # checking. The editor directly refuses ambiguous/priority-wrapped sources.
+    with pytest.raises(ConflictError):
         Engine(backend).plan(parse("services.openssh.enable:true"), {})
 
 
