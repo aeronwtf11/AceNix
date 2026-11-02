@@ -157,26 +157,62 @@ current native files. Nix chooses each package's version from your selected
 Nixpkgs and builds a coherent system generation. Personal `nix profile` packages,
 standalone Home Manager and Flatpak have their own update mechanisms.
 
-To update **AceNix itself**, update the source used to install it. For a remote
-user-profile installation, inspect `nix profile list`, then run:
+To update **AceNix itself**, first inspect the name and source of its installed
+profile entry:
 
 ```sh
-nix --extra-experimental-features 'nix-command flakes' profile upgrade AceNix
+nix --extra-experimental-features 'nix-command flakes' profile list
 ```
 
-Use the actual profile entry name if different. For an installation pointing at
-`git+file:///home/aaron/AceNix`, first pull the checkout's installed branch:
+The entry name is not necessarily `AceNix`: names depend on how and with which
+Nix version it was installed, and they are case-sensitive. Upgrade only its
+actual name, replacing `ENTRY_NAME` below:
 
 ```sh
-cd ~/AceNix
-git switch acenix-v1.0.0
-git pull --ff-only
-nix --extra-experimental-features 'nix-command flakes' profile upgrade AceNix
+nix --extra-experimental-features 'nix-command flakes' profile upgrade --refresh ENTRY_NAME
 ```
+
+For a `git+file:///.../AceNix` installation, a successful update of that checkout
+is required **before** upgrading its profile entry. `git pull --ff-only` stops
+when histories have diverged, including after an upstream force update. If it
+fails, the checkout is still old: a subsequent profile upgrade will not repair
+Git history. Preserve local work and use the recovery route below instead of
+resetting the checkout or blindly rebasing it.
+
+#### Recover a diverged checkout or an unknown profile entry
+
+Install the current release directly, independently of the old checkout and its
+profile name:
+
+```sh
+nix --extra-experimental-features 'nix-command flakes' profile install \
+  --refresh --priority 0 \
+  https://codeload.github.com/aeronwtf11/AceNix/tar.gz/acenix-v1.0.0
+hash -r
+sudo "$HOME/.nix-profile/bin/acenix" status --json
+```
+
+Priority 0 selects the new command over an old entry installed at Nix's default
+priority 5. The old profile entry and local checkout are retained, along with
+other installed packages. This recovery route assumes the previous entry used
+the default priority; custom priorities should be inspected in `profile list
+--json` first. If Nix reports a conflict, stop and inspect those entries rather
+than removing packages indiscriminately. This command installs the CLI only; it
+does not rebuild or activate NixOS.
+
+The explicit executable path makes `sudo` use the newly installed user-profile
+command even if its command search path still finds an older system-wide copy.
+Confirm that status reports `"workflow": "native"`. If the CLI still prints
+`Reading rules from ...config.ace` without `--rules`, the command is old.
+`acenix --version` remains 1.0.0 on this branch, so the version alone cannot
+confirm that the update succeeded. Use `type -a acenix` and
+`readlink -f "$HOME/.nix-profile/bin/acenix"` to investigate executable selection.
+A failed update may warn and leave the old command in place; check the actual
+executable before using write or activation commands.
 
 A system-wide source/flake installation instead needs its source refreshed and
-a normal NixOS rebuild. `acenix --version` remains 1.0.0 on this release branch;
-check the installed revision in `nix profile list` when comparing updates.
+a normal reviewed NixOS rebuild. The explicit user-profile path above can be
+used while that installation is being updated.
 
 ### Your native target
 
